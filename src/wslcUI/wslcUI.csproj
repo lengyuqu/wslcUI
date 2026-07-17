@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>wslcUI</RootNamespace>
+    <AssemblyName>wslcUI</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64;arm64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWinUI>true</UseWinUI>
+    <EnableDefaultProgramFile>false</EnableDefaultProgramFile>
+    <!-- Unpackaged WinUI 3:
+         - set to true to build self-contained (no runtime install needed), or
+         - leave false and install the Windows App SDK 1.6 runtime on dev machines. -->
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <WindowsPackageType>None</WindowsPackageType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228003" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <!-- wslc container SDK (preview). Pinned to 2.9.3 to match wslc 2.9.3.0. -->
+    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.3" />
+  </ItemGroup>
+
+</Project>

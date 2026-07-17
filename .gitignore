@@ -1,0 +1,25 @@
+## .NET / WinUI build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## WindowsAppSDK (unpackaged) generated artifacts
+Package/
+AppPackages/
+
+## JetBrains Rider
+.idea/
+
+## OS
+Thumbs.db
+Desktop.ini
+
+## Local wslc session storage / built image tars
+*.tar
+WslcStorage/
+wslcUI/session/
+
+## Logs
+*.log
