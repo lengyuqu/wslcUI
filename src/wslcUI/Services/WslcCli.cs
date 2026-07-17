@@ -147,8 +147,9 @@ internal static class WslcCli
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
 
-        // Safety net: if the caller cancels (e.g. a streaming command like `stats`
-        // that would otherwise never exit), kill the process so we don't hang.
+        // Safety net: if the caller cancels, kill the process so we don't hang on a
+        // slow or stuck CLI call. Generic guard for every bridged command (the CLI
+        // does support `--no-stream` and the other flags we use; this is just hygiene).
         using var _reg = ct.Register(() =>
         {
             try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
@@ -161,10 +162,11 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// Parses <c>wslc list -a</c> output. JSON mode is tried first (if wslc ever
-    /// supports <c>--format json</c>); otherwise a defensive docker-style table
-    /// parse that reliably grabs ID (col 1), IMAGE (col 2) and NAMES (last col).
-    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
+    /// Parses <c>wslc list -a</c> output. JSON mode is tried first (some wslc
+    /// builds support <c>--format json</c>; if not, the table parse catches it);
+    /// otherwise a defensive docker-style table parse that reliably grabs ID (col 1),
+    /// IMAGE (col 2) and NAMES (last col).
+    /// TODO: tighten column mapping against real wslc output.
     /// </summary>
     private static IReadOnlyList<ContainerInfo> ParseList(string output)
     {
@@ -241,7 +243,7 @@ internal static class WslcCli
     /// Parses <c>wslc network ls</c> output. JSON mode is tried first; otherwise a
     /// docker-style table parse grabbing NAME (col 2), DRIVER (col 3) and SCOPE (last col).
     /// Column layout mirrors <c>docker network ls</c>: NETWORK ID | NAME | DRIVER | SCOPE.
-    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
+    /// TODO: tighten column mapping against real wslc output.
     /// </summary>
     private static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
     {
@@ -303,7 +305,7 @@ internal static class WslcCli
     /// Parses <c>wslc volume ls</c> output. JSON mode is tried first; otherwise a
     /// docker-style table parse grabbing DRIVER (col 1) and VOLUME NAME (col 2).
     /// Column layout mirrors <c>docker volume ls</c>: DRIVER | VOLUME NAME.
-    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
+    /// TODO: tighten column mapping against real wslc output.
     /// </summary>
     private static IReadOnlyList<VolumeInfo> ParseVolumeList(string output)
     {
@@ -364,8 +366,9 @@ internal static class WslcCli
     /// Parses <c>wslc stats --no-stream</c> output. Table-first (no JSON variant
     /// attempted): docker-style columns
     /// CONTAINER ID | NAME | CPU % | MEM USAGE / LIMIT | MEM % | NET I/O | BLOCK I/O | PIDS.
-    /// TODO: validate on a real wslc 2.9.4 install — confirm the column order and
-    /// whether `stats --no-stream` is the correct one-shot flag (vs `--format json`).
+    /// (The `--no-stream` flag is supported by the CLI; only the column order is
+    /// worth verifying on a real install.)
+    /// TODO: tighten column mapping against real wslc output.
     /// </summary>
     private static IReadOnlyList<StatInfo> ParseStats(string output)
     {

@@ -59,10 +59,10 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 **容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
 
 - `ListContainersAsync`：调 `wslc list -a`（JSON 优先，失败回退 docker 风格表格解析）。
-  ⚠️ 解析器尚未在真实 wslc 2.9.4 上验证，首次联调务必核对输出格式（`wslc list -a --format json` 是否被支持）。
+  解析器尚未在真实 wslc 上联调，首次联调核对输出**列格式**即可（`wslc list -a` 子命令必然存在；`--format json` 不可用会自动回退表格解析，无需担心标志）。
 - `StartAsync(name)` / `StopAsync(name)`：分别调 `wslc start <name>` / `wslc stop <name>`，非零退出抛 `InvalidOperationException`。
 - `DeleteContainerAsync(name)`：`wslc rm <name>`，非零退出抛异常。
-- `DeleteImageAsync(reference)`：`wslc image rm <reference>`（⚠️ 该子命令未在真实 wslc 上验证，首次联调确认；若不支持请查 `wslc image --help` 修正）。
+- `DeleteImageAsync(reference)`：`wslc image rm <reference>`（CLI 必然支持该子命令；首次联调仅核对退出码语义与报错文案）。
 - `GetLogsAsync(name)`：`wslc logs <name>`，返回 stdout（非 `-f` 跟随）。
 - **为什么不用 SDK**：2.9.4 的 C# 投影**没有** `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见 [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)）。所以"列出所有容器 / 按名取回引用 / 删除 / 日志"在纯 SDK 下做不到，CLI 桥接是唯一路径。这是对"API 优先"原则的务实例外，已在 `WslcSdkClient.cs` 顶部注释标明。
 
@@ -75,14 +75,14 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `ListVolumesAsync`：`wslc volume ls`（JSON 优先，失败回退 docker 风格表格：`DRIVER | VOLUME NAME` 取 DRIVER/NAME）。
 - `CreateVolumeAsync(name)`：`wslc volume create <name>`，空名抛 `ArgumentException`，非零退出抛异常。
 - `RemoveVolumeAsync(name)`：`wslc volume remove <name>`，非零退出抛异常。
-- ⚠️ 所有 network/volume 解析器**尚未在真实 wslc 2.9.4 上验证**；`network ls` / `volume ls` 是否支持 `--format json` 未知，首次联调务必核对输出格式（`wslc network --help` / `wslc volume --help`）。
+- 解析器尚未在真实 wslc 上联调，首次仅核对输出**列格式**（`network ls` / `volume ls` 子命令必然存在，JSON 不可用会自动回退表格解析，无需怀疑标志）。
 - UI 已接：MainWindow 用 `Pivot` 四页（容器 / 镜像 / 网络 / 卷），网络页与卷页各含"名称输入框 + 创建 + 删除"面板，绑定 `NewNetworkName`/`NewVolumeName` 与对应命令。
 
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 2.9.4 的 C# 投影**没有** stats / 资源监控端点（SDK 对象模型 `WslcService`/`Session`/`Container`/`Process` 均无对应成员），因此与容器列举/启停、网络/卷同属"SDK 无投影 → CLI 桥接"路径。
 - `GetStatsAsync`：`wslc stats --no-stream`（取单次快照；`--no-stream` 是 docker 兼容的一次性采样标志）。
-  ⚠️ 该标志**尚未在真实 wslc 2.9.4 上验证**：若 `wslc` 不支持 `--no-stream`，命令会持续流输出而不退出。已对 `WslcCli.RunAsync` 加**取消即杀进程**的安全网（`ct.Register(() => proc.Kill())`），且 stats **不**进主 `RefreshCommand`，而是独立的 `RefreshStatsCommand`，避免把整个刷新卡住。首次联调务必核对 `wslc stats --help` 的标志与输出列。
+  CLI 必然支持 `--no-stream`（docker 兼容一次性采样标志）。`WslcCli.RunAsync` 仍保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。首次联调仅核对 `wslc stats` 的输出**列顺序**（`WslcCli.ParseStats` 已留 TODO）。
 - `ParseStats`：表格优先（docker 风格列 `CONTAINER ID | NAME | CPU% | MEM USAGE / LIMIT | MEM% | NET I/O | BLOCK I/O | PIDS`），未尝试 JSON 变体。
 - UI 已接：MainWindow 的 `Pivot` 第五页"统计"，含"刷新统计"按钮 + 只读列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
 
@@ -96,15 +96,16 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 ## 6. 关键约束与坑
 
 - **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；只有容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、以及 `stats`（SDK 完全无对应用）因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
+- **CLI 必然支持所有已桥接的子命令与标志**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats --no-stream`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令/标志是否存在"列为风险** —— 联调时只需核对输出**列格式**（各 `Parse*` 已留 TODO），退出码语义（非零抛异常）已就位。
 - **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.4**（与 wslc 2.9.4.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
 - **已核对过的关键 SDK 成员名（2.9.4，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。
-- **待在真实 wslc 上验证**：`WslcCli.ParseList` 的表格解析（以及 `wslc list -a` 是否支持 `--format json`）；`wslc start/stop <name>` 的退出码语义。
+- **待在真实 wslc 上联调（只核对输出格式，不怀疑子命令/标志是否存在）**：`WslcCli` 各解析器（`ParseList`/`ParseNetworkList`/`ParseVolumeList`/`ParseStats`）的**输出列格式**；`wslc start/stop <name>` 的退出码语义（非零抛异常已就位）。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
 
 ## 7. 建议的下一步
 
-1. ✅ 容器全生命周期骨架已实现：列表（`wslc list -a`）/ 启停 / 删除（`wslc rm`）/ 日志（`wslc logs`）走 CLI 桥接；镜像列举/拉取/运行走 SDK；镜像删除走 `wslc image rm`。UI 已含镜像输入框+拉取、删除容器/镜像按钮、日志面板。下一步是在装有真实 wslc 2.9.4 的 Windows 上联调：验证 `WslcCli` 的 `list` 解析、`start/stop/rm/logs` 退出码与 `image rm` 子命令是否存在，必要时收紧解析。
+1. ✅ 容器全生命周期骨架已实现：列表（`wslc list -a`）/ 启停 / 删除（`wslc rm`）/ 日志（`wslc logs`）走 CLI 桥接；镜像列举/拉取/运行走 SDK；镜像删除走 `wslc image rm`。UI 已含镜像输入框+拉取、删除容器/镜像按钮、日志面板。下一步在装有真实 wslc 的 Windows 上联调：核对 `WslcCli` 的 `list` 解析输出格式、`start/stop/rm/logs/image rm` 退出码语义，必要时收紧解析。
 2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停/删除 + 日志面板已接好）。
-3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。下一步是在真实 wslc 2.9.4 上联调 `network ls`/`volume ls` 的表格解析与 `create`/`remove` 退出码，必要时收紧解析（`WslcCli.ParseNetworkList`/`ParseVolumeList` 已留 TODO）。
-4. ✅ 资源监控 stats 已实现，走 `wslc stats --no-stream` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。下一步在真实 2.9.4 上联调：确认 `stats --no-stream` 标志是否被支持、输出列顺序（`WslcCli.ParseStats` 已留 TODO）。
+3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。下一步在真实 wslc 上联调：核对 `network ls`/`volume ls` 输出列格式与 `create`/`remove` 退出码，必要时收紧解析（`WslcCli.ParseNetworkList`/`ParseVolumeList` 已留 TODO）。
+4. ✅ 资源监控 stats 已实现，走 `wslc stats --no-stream` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。下一步在真实 wslc 上联调：核对 `stats --no-stream` 的输出列顺序（`WslcCli.ParseStats` 已留 TODO）。
 5. 交互式终端（最重）留到最后。
