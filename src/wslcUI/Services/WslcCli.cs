@@ -11,7 +11,7 @@ namespace wslcUI.Services;
 
 /// <summary>
 /// Bridge to the <c>wslc</c> CLI for the operations the Microsoft.WSL.Containers
-/// 2.9.3 SDK does NOT project into C#:
+/// 2.9.4 SDK does NOT project into C#:
 ///   - enumerating existing containers   (no <c>Session.GetContainers()</c>)
 ///   - looking up a container by name  (no <c>Session.GetContainer(name)</c>)
 ///   - start / stop / remove a container by name
@@ -96,7 +96,7 @@ internal static class WslcCli
     /// Parses <c>wslc list -a</c> output. JSON mode is tried first (if wslc ever
     /// supports <c>--format json</c>); otherwise a defensive docker-style table
     /// parse that reliably grabs ID (col 1), IMAGE (col 2) and NAMES (last col).
-    /// TODO: validate on a real wslc 2.9.3 install and tighten column mapping.
+    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
     /// </summary>
     private static IReadOnlyList<ContainerInfo> ParseList(string output)
     {

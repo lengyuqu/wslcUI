@@ -23,8 +23,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228003" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
-    <!-- wslc container SDK (preview). Pinned to 2.9.3 to match wslc 2.9.3.0. -->
-    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.3" />
+    <!-- wslc container SDK (preview). Pinned to 2.9.4 to match wslc 2.9.4.0. -->
+    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.4" />
   </ItemGroup>
 
 </Project>
