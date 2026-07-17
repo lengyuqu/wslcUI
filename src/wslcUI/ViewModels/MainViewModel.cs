@@ -19,6 +19,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private ObservableCollection<ContainerInfo> _containers = new();
     [ObservableProperty] private ObservableCollection<ImageInfo> _images = new();
     [ObservableProperty] private ContainerInfo? _selectedContainer;
+    [ObservableProperty] private ImageInfo? _selectedImage;
+    [ObservableProperty] private string _pullReference = "alpine:latest";
+    [ObservableProperty] private string _logs = "";
+    [ObservableProperty] private bool _isLogsOpen;
 
     public MainViewModel(IWslcClient client) => _client = client;
 
@@ -92,14 +96,81 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task PullAsync()
     {
+        var reference = PullReference.Trim();
+        if (string.IsNullOrWhiteSpace(reference)) return;
         IsBusy = true;
-        Status = "拉取 alpine:latest …";
+        Status = $"拉取 {reference} …";
         try
         {
             var progress = new Progress<(string Status, long Current, long Total)>(
                 p => Status = $"拉取 {p.Status} ({p.Current}/{p.Total})");
-            await _client.PullImageAsync("alpine:latest", progress);
+            await _client.PullImageAsync(reference, progress);
             await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task DeleteContainerAsync()
+    {
+        if (SelectedContainer is null) return;
+        IsBusy = true;
+        Status = $"删除容器 {SelectedContainer.Name} …";
+        try
+        {
+            await _client.DeleteContainerAsync(SelectedContainer.Name);
+            await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task DeleteImageAsync()
+    {
+        if (SelectedImage is null) return;
+        IsBusy = true;
+        var reference = $"{SelectedImage.Repository}:{SelectedImage.Tag}";
+        Status = $"删除镜像 {reference} …";
+        try
+        {
+            await _client.DeleteImageAsync(reference);
+            await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ShowLogsAsync()
+    {
+        if (SelectedContainer is null) return;
+        IsBusy = true;
+        Status = $"读取 {SelectedContainer.Name} 日志 …";
+        try
+        {
+            Logs = await _client.GetLogsAsync(SelectedContainer.Name);
+            IsLogsOpen = true;
+            Status = $"{SelectedContainer.Name} 日志已加载";
         }
         catch (System.Exception ex)
         {

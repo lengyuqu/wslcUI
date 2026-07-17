@@ -23,11 +23,14 @@ namespace wslcUI.Services;
 ///
 /// SDK GAPS in 2.9.3 (the C# projection does not expose these, see
 /// wsl.dev/api-reference/csharp/known-gaps/): there is no
-/// Session.GetContainers() and no Session.GetContainer(name). Those three
-/// operations are bridged through the `wslc` CLI in WslcCli.cs:
+/// Session.GetContainers() and no Session.GetContainer(name). Those and a
+/// few more operations are bridged through the `wslc` CLI in WslcCli.cs:
 ///   - ListContainersAsync  ← `wslc list -a`
 ///   - StartAsync(name)      ← `wslc start &lt;name&gt;`
 ///   - StopAsync(name)       ← `wslc stop &lt;name&gt;`
+///   - DeleteContainerAsync  ← `wslc rm &lt;name&gt;`
+///   - DeleteImageAsync      ← `wslc image rm &lt;reference&gt;`
+///   - GetLogsAsync(name)   ← `wslc logs &lt;name&gt;`
 /// </summary>
 public sealed class WslcSdkClient : IWslcClient, IDisposable
 {
@@ -142,6 +145,16 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public Task StopAsync(string name, CancellationToken ct = default) =>
         WslcCli.StopAsync(name, ct);
+
+    // SDK gap → CLI bridge (see WslcCli.cs).
+    public Task DeleteContainerAsync(string name, CancellationToken ct = default) =>
+        WslcCli.DeleteContainerAsync(name, ct);
+
+    public Task DeleteImageAsync(string reference, CancellationToken ct = default) =>
+        WslcCli.DeleteImageAsync(reference, ct);
+
+    public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
+        WslcCli.GetLogsAsync(name, ct);
 
     public void Dispose()
     {

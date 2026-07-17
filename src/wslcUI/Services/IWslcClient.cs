@@ -30,4 +30,13 @@ public interface IWslcClient
     Task StartAsync(string name, CancellationToken ct = default);
 
     Task StopAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Removes a container by name (CLI bridge: `wslc rm`).</summary>
+    Task DeleteContainerAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Removes an image by reference (CLI bridge: `wslc image rm`).</summary>
+    Task DeleteImageAsync(string reference, CancellationToken ct = default);
+
+    /// <summary>Returns captured logs for a container (CLI bridge: `wslc logs`).</summary>
+    Task<string> GetLogsAsync(string name, CancellationToken ct = default);
 }

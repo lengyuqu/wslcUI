@@ -14,9 +14,11 @@ namespace wslcUI.Services;
 /// 2.9.3 SDK does NOT project into C#:
 ///   - enumerating existing containers   (no <c>Session.GetContainers()</c>)
 ///   - looking up a container by name  (no <c>Session.GetContainer(name)</c>)
-///   - start / stop a container by name
+///   - start / stop / remove a container by name
+///   - remove an image, fetch container logs
 ///
-/// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c>.
+/// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c> /
+/// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c>.
 /// See AGENTS.md → "Known SDK gaps". The executable path matches the wslc skill doc.
 /// </summary>
 internal static class WslcCli
@@ -41,6 +43,28 @@ internal static class WslcCli
         var (exit, _, stderr) = await RunAsync(new[] { "stop", name }, ct).ConfigureAwait(false);
         if (exit != 0)
             throw new InvalidOperationException($"wslc stop 失败: {stderr.Trim()}");
+    }
+
+    public static async Task DeleteContainerAsync(string name, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(new[] { "rm", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc rm 失败: {stderr.Trim()}");
+    }
+
+    public static async Task DeleteImageAsync(string reference, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(new[] { "image", "rm", reference }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image rm 失败: {stderr.Trim()}");
+    }
+
+    public static async Task<string> GetLogsAsync(string name, CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(new[] { "logs", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc logs 失败: {stderr.Trim()}");
+        return stdout;
     }
 
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(

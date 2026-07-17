@@ -42,4 +42,13 @@ public sealed class FakeWslcClient : IWslcClient
     public Task StartAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task StopAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task DeleteContainerAsync(string name, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task DeleteImageAsync(string reference, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
+        Task.FromResult($"[fake logs] container {name} is running…");
 }
