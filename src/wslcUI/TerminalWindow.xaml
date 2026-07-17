@@ -1,0 +1,24 @@
+<Window
+    x:Class="wslcUI.TerminalWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:wslcUI"
+    Title="终端"
+    Height="520" Width="820">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <ScrollViewer x:Name="OutputScroller" Grid.Row="0"
+                      VerticalScrollBarVisibility="Auto"
+                      BorderBrush="{ThemeResource ControlElevationBorderBrush}"
+                      BorderThickness="1">
+            <TextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="13"
+                       TextWrapping="Wrap" Padding="6" />
+        </ScrollViewer>
+        <TextBox x:Name="InputBox" Grid.Row="1" Margin="0,6,0,0"
+                 PlaceholderText="输入命令后回车发送 (exit 退出)"
+                 FontFamily="Consolas" KeyDown="InputBox_KeyDown" />
+    </Grid>
+</Window>

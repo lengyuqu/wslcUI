@@ -8,7 +8,7 @@
 Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `wslc` 套一个 WinUI 3 原生 GUI 外壳。
 
 - 技术栈：**C# + .NET 8 + WinUI 3（Windows App SDK 1.6）+ CommunityToolkit.Mvvm**。
-- 后端集成 **API 优先 + CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举 / 按名启停 / 删除 / 日志**，以及**网络 / 卷的整套 CRUD**，因 2.9.4 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs`）。
+- 后端集成 **API 优先 + CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举 / 按名启停 / 删除 / 日志**，以及**网络 / 卷的整套 CRUD**、**镜像构建**（`wslc build -t`）、**交互式终端**（`wslc exec -it`，经 ConPTY 真 TTY），因 2.9.4 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`）。
 
 ## 2. 仓库与协作
 
@@ -86,16 +86,27 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `ParseStats`：表格优先（docker 风格列 `CONTAINER ID | NAME | CPU% | MEM USAGE / LIMIT | MEM% | NET I/O | BLOCK I/O | PIDS`），未尝试 JSON 变体。
 - UI 已接：MainWindow 的 `Pivot` 第五页"统计"，含"刷新统计"按钮 + 只读列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
 
-**未实现**（路线图）：
+**镜像构建 build —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
-| 功能 | 说明 |
-|------|------|
-| 镜像自动构建 | 可用 `<WslcImage>` MSBuild 集成 |
-| 交互式终端 exec/attach | `Process` 已给 stdin/stdout 字节流，需配 ConPTY / XTermSharp 控件渲染 |
+- 2.9.4 SDK **没有** Dockerfile 构建的投影（只有运行期 `CreateContainer`）；镜像构建走 `wslc build -t <tag> <context>`（从目录里的 `Dockerfile`/`Containerfile` 构建）。
+- `BuildImageAsync(contextDir, tag, progress)`：`wslc build -t <tag> "<contextDir>"`，用 `OutputDataReceived` 逐行流式回传构建日志（非一次性读到底），非零退出抛 `InvalidOperationException`。空标签抛 `ArgumentException`；目录 / Dockerfile 缺失抛 `DirectoryNotFoundException`/`FileNotFoundException`。
+- UI 已接：MainWindow 的 `Pivot` 第六页"构建"，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
+
+**交互式终端 exec/attach —— 已实现（最重）**
+
+- 走 `wslc exec -it <name> /bin/sh`，但**不是**普通管道：用 Windows Pseudoconsole（ConPTY）P/Invoke 封装（`Services/ConPty.cs`，零外部 NuGet 依赖）给容器 shell 一个**真 TTY**，使行编辑 / 颜色 / 全屏程序正常。
+- `TerminalWindow`（`TerminalWindow.xaml(.cs)`）是独立窗口，容器页"终端"按钮打开；字节流经 `PseudoConsole.OutputReceived` 事件回传，UI 线程 `DispatcherQueue` 合入 `TextBlock`，并用正则剥掉 ANSI/OSC 转义让文本可读；输入框回车把整行 + 换行写回 PTY。
+- ⚠️ ConPTY 是 `kernel32.dll` 的 `CreatePseudoConsole`/`CreateProcessW` P/Invoke，**本会话无法编译验证**（无 .NET / WSL），属未联调代码。首次真实运行见 `ConPty.cs` 顶部 TODO 核对清单（创建是否成功 / 输入是否到达 / resize 是否生效）。完整 VT 渲染（XTermSharp / WinUI TermControl）是后续增强，当前 MVP 只显示去转义文本。
+
+**路线图（剩余可选增强）**：
+
+- 完整 VT 终端渲染（XTermSharp / WinUI TermControl）。
+- 镜像自动构建改为 SDK 的 `<WslcImage>` MSBuild 集成（CI 打包用，适合把 wslcUI 自身打包成镜像）。
+- 交互式终端支持 attach 到已运行进程（而非仅 `exec` 新 shell）。
 
 ## 6. 关键约束与坑
 
-- **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；只有容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、以及 `stats`（SDK 完全无对应用）因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
+- **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
 - **CLI 必然支持所有已桥接的子命令与标志**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats --no-stream`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令/标志是否存在"列为风险** —— 联调时只需核对输出**列格式**（各 `Parse*` 已留 TODO），退出码语义（非零抛异常）已就位。
 - **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.4**（与 wslc 2.9.4.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
 - **已核对过的关键 SDK 成员名（2.9.4，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。
@@ -108,4 +119,4 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停/删除 + 日志面板已接好）。
 3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。下一步在真实 wslc 上联调：核对 `network ls`/`volume ls` 输出列格式与 `create`/`remove` 退出码，必要时收紧解析（`WslcCli.ParseNetworkList`/`ParseVolumeList` 已留 TODO）。
 4. ✅ 资源监控 stats 已实现，走 `wslc stats --no-stream` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。下一步在真实 wslc 上联调：核对 `stats --no-stream` 的输出列顺序（`WslcCli.ParseStats` 已留 TODO）。
-5. 交互式终端（最重）留到最后。
+5. ✅ 镜像构建 + 交互式终端均已实现（分别走 `wslc build -t` CLI 桥接 与 `wslc exec -it` + ConPTY 真 TTY）。下一步在真实 wslc 上联调：核对 build 流式输出、以及 ConPTY 的创建/输入/resize（见 `Services/ConPty.cs` 顶部 TODO）。

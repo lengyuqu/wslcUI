@@ -30,6 +30,7 @@ namespace wslcUI.Services;
 ///   - StopAsync(name)       ← `wslc stop &lt;name&gt;`
 ///   - DeleteContainerAsync  ← `wslc rm &lt;name&gt;`
 ///   - DeleteImageAsync      ← `wslc image rm &lt;reference&gt;`
+///   - BuildImageAsync       ← `wslc build -t &lt;tag&gt; &lt;context&gt;`
 ///   - GetLogsAsync(name)   ← `wslc logs &lt;name&gt;`
 ///
 /// Networks and volumes have NO C# projection at all, so every operation is
@@ -161,6 +162,11 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public Task DeleteImageAsync(string reference, CancellationToken ct = default) =>
         WslcCli.DeleteImageAsync(reference, ct);
+
+    // ---- image build (no SDK projection for Dockerfile builds → CLI bridge) ----
+    public Task BuildImageAsync(
+        string contextDir, string tag, IProgress<string>? progress = null, CancellationToken ct = default) =>
+        WslcCli.BuildImageAsync(contextDir, tag, progress, ct);
 
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         WslcCli.GetLogsAsync(name, ct);

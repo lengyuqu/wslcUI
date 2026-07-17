@@ -21,12 +21,17 @@ namespace wslcUI.Services;
 ///
 /// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c> /
 /// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c> /
-/// <c>wslc network create|ls|remove</c> / <c>wslc volume create|ls|remove</c>.
-/// See AGENTS.md → "Known SDK gaps". The executable path matches the wslc skill doc.
+/// <c>wslc network create|ls|remove</c> / <c>wslc volume create|ls|remove</c> /
+/// <c>wslc build -t &lt;tag&gt; &lt;context&gt;</c> (image build from a Dockerfile).
+/// See AGENTS.md → "Known SDK gaps". The executable path (ExePath) is also
+/// reused directly by the interactive terminal (TerminalWindow) for `wslc exec -it`.
 /// </summary>
 internal static class WslcCli
 {
     private const string Exe = @"C:\Program Files\WSL\wslc.exe";
+
+    /// <summary>Absolute path to wslc.exe (also consumed by the terminal).</summary>
+    public static string ExePath => Exe;
 
     public static async Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct)
     {
@@ -60,6 +65,43 @@ internal static class WslcCli
         var (exit, _, stderr) = await RunAsync(new[] { "image", "rm", reference }, ct).ConfigureAwait(false);
         if (exit != 0)
             throw new InvalidOperationException($"wslc image rm 失败: {stderr.Trim()}");
+    }
+
+    // ---- image build (no SDK projection for Dockerfile builds → CLI bridge) ----
+    public static async Task BuildImageAsync(
+        string contextDir, string tag, IProgress<string>? progress, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(tag))
+            throw new ArgumentException("镜像标签不能为空。", nameof(tag));
+        if (!Directory.Exists(contextDir))
+            throw new DirectoryNotFoundException($"构建上下文目录不存在: {contextDir}");
+        if (!File.Exists(Path.Combine(contextDir, "Dockerfile")) &&
+            !File.Exists(Path.Combine(contextDir, "Containerfile")))
+            throw new FileNotFoundException("上下文中未找到 Dockerfile / Containerfile。", contextDir);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = Exe,
+            Arguments = $"build -t \"{tag}\" \"{contextDir}\"",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+        };
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null) progress?.Report(e.Data);
+        };
+        proc.BeginOutputReadLine();
+        var stderr = await proc.StandardError.ReadToEndAsync(ct).ConfigureAwait(false);
+        await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"wslc build 失败 (exit {proc.ExitCode}): {stderr.Trim()}");
     }
 
     public static async Task<string> GetLogsAsync(string name, CancellationToken ct)

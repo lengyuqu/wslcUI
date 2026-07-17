@@ -12,7 +12,8 @@
 > [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影，也没有 stats / 资源监控端点**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志"、
 > 以及"网络/卷的创建、列举、删除"，还有"资源使用快照"在纯 SDK 下都做不到。这部分在 `WslcCli.cs` 里桥接
 > `wslc list -a` / `wslc start` / `wslc stop` / `wslc rm` / `wslc image rm` / `wslc logs`
-> 以及 `wslc network create|ls|remove` / `wslc volume create|ls|remove` / `wslc stats --no-stream`。
+> 以及 `wslc network create|ls|remove` / `wslc volume create|ls|remove` / `wslc stats --no-stream`
+> 以及 `wslc build -t <tag> <context>`（镜像构建）/ `wslc exec -it <name> /bin/sh`（交互式终端，经 ConPTY 真 TTY）。
 > 属于对"API 优先"的有据例外，不是退回到"用 CLI 封装一切"。
 
 SDK 对象模型(Microsoft.WSL.Containers):
@@ -33,8 +34,8 @@ SDK 对象模型(Microsoft.WSL.Containers):
 ```
 ┌─────────────────────────────────────────────┐
 │ 视图层  WinUI 3 (Fluent)                    │  XAML + x:Bind
-│   - MainWindow: 容器/镜像/网络/卷 Pivot 列表、 │
-│     工具栏、日志面板、状态栏                      │
+│   - MainWindow: 容器/镜像/网络/卷/统计/构建 Pivot、│
+│     工具栏、日志面板、状态栏、终端窗口          │
 ├─────────────────────────────────────────────┤
 │ ViewModel  MVVM (CommunityToolkit.Mvvm)      │  ObservableObject / RelayCommand
 │   - MainViewModel: 状态、命令、集合绑定        │
@@ -53,8 +54,8 @@ ViewModel **只依赖 `IWslcClient` 接口**,不感知具体后端。好处:
 
 - 真实后端用 `WslcSdkClient`(生产)。
 - 没装 WSL 时用 `FakeWslcClient` 跑通整个 XAML/ViewModel 流程。
-- 未来若 `stats` 监控在 SDK 里缺失,可单独为其写 CLI 适配器
-  实现同一接口,UI 无感(network/volume 已用此模式桥接)。
+- 未来若 `stats` 监控、`build`、`exec` 在 SDK 里缺失,可单独为其写 CLI 适配器
+  实现同一接口,UI 无感(network/volume/build/exec 已用此模式桥接)。
 
 切换只改 `App.xaml.cs` 一行注册:
 ```csharp
@@ -82,9 +83,8 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 | 卷列举 | ✅ 已用 CLI 桥接 | 2.9.4 SDK 无 volume 投影，走 `wslc volume ls`（`WslcCli.ParseVolumeList`） |
 | 卷创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc volume create/remove <name>` |
 | 资源监控 (stats) | ✅ 已用 CLI 桥接 | 走 `wslc stats --no-stream`（`WslcCli.ParseStats`，取消即杀进程安全网 + 独立 `RefreshStatsCommand`） |
-| 镜像自动构建 | 未实现 | 可用 SDK 的 `<WslcImage>` MSBuild 集成 |
-| 交互式终端 (exec/attach) | 未实现 | `Process` 已提供 stdin/stdout 字节流,
-需配 ConPTY / XTermSharp 终端控件渲染 |
+| 镜像构建 (wslc build -t) | ✅ 已用 CLI 桥接 | 走 `wslc build -t <tag> <context>`，`OutputDataReceived` 流式回传（SDK 无 Dockerfile 构建投影） |
+| 交互式终端 (exec -it + ConPTY) | ✅ 已实现 | 走 `wslc exec -it <name> /bin/sh`，经 `Services/ConPty.cs` 的 Windows Pseudoconsole P/Invoke 给容器真 TTY；独立 `TerminalWindow` 渲染（去 ANSI 转义） |
 
 ## 6. 预览风险
 

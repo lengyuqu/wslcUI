@@ -49,6 +49,16 @@ public sealed class FakeWslcClient : IWslcClient
     public Task DeleteImageAsync(string reference, CancellationToken ct = default) =>
         Task.CompletedTask;
 
+    public Task BuildImageAsync(
+        string contextDir, string tag, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        progress?.Report($"[fake] 从 {contextDir} 构建镜像 {tag} …");
+        progress?.Report("[fake] STEP 1/5 : 解析 Dockerfile");
+        progress?.Report("[fake] STEP 3/5 : 拉取基础镜像");
+        progress?.Report($"[fake] STEP 5/5 : 成功标记 {tag}");
+        return Task.CompletedTask;
+    }
+
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         Task.FromResult($"[fake logs] container {name} is running…");
 

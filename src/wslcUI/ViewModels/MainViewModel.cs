@@ -7,6 +7,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using wslcUI.Models;
 using wslcUI.Services;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
 
 namespace wslcUI.ViewModels;
 
@@ -29,6 +31,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _newNetworkName = "";
     [ObservableProperty] private string _newVolumeName = "";
     [ObservableProperty] private string _logs = "";
+    [ObservableProperty] private string _buildContext = "";
+    [ObservableProperty] private string _buildTag = "myimage:latest";
+    [ObservableProperty] private string _buildOutput = "";
+
+    /// <summary>Owner window handle, set by MainWindow so the FolderPicker can parent.</summary>
+    public IntPtr OwnerHandle { get; set; }
 
     public MainViewModel(IWslcClient client) => _client = client;
 
@@ -161,6 +169,48 @@ public partial class MainViewModel : ObservableObject
         {
             await _client.DeleteImageAsync(reference);
             await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task PickBuildContextAsync()
+    {
+        var picker = new FolderPicker();
+        picker.FileTypeFilter.Add("*");
+        // WinUI 3 unpackaged: the picker must be parented to our window.
+        if (OwnerHandle != IntPtr.Zero)
+            InitializeWithWindow.Initialize(picker, OwnerHandle);
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is not null)
+            BuildContext = folder.Path;
+    }
+
+    [RelayCommand]
+    private async Task BuildImageAsync()
+    {
+        var ctx = BuildContext.Trim();
+        var tag = BuildTag.Trim();
+        if (string.IsNullOrWhiteSpace(ctx) || string.IsNullOrWhiteSpace(tag)) return;
+        IsBusy = true;
+        Status = $"构建 {tag} …";
+        BuildOutput = "";
+        try
+        {
+            var progress = new Progress<string>(line =>
+            {
+                BuildOutput += line + "\n";
+                Status = $"构建 {tag}: {line}";
+            });
+            await _client.BuildImageAsync(ctx, tag, progress);
+            Status = $"镜像 {tag} 构建完成";
         }
         catch (System.Exception ex)
         {

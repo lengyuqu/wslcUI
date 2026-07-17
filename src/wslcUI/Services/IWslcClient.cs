@@ -37,6 +37,13 @@ public interface IWslcClient
     /// <summary>Removes an image by reference (CLI bridge: `wslc image rm`).</summary>
     Task DeleteImageAsync(string reference, CancellationToken ct = default);
 
+    /// <summary>Builds an image from a Dockerfile in <paramref name="contextDir"/> (CLI bridge: `wslc build -t`).</summary>
+    Task BuildImageAsync(
+        string contextDir,
+        string tag,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default);
+
     /// <summary>Returns captured logs for a container (CLI bridge: `wslc logs`).</summary>
     Task<string> GetLogsAsync(string name, CancellationToken ct = default);
 
