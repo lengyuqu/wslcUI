@@ -39,4 +39,22 @@ public interface IWslcClient
 
     /// <summary>Returns captured logs for a container (CLI bridge: `wslc logs`).</summary>
     Task<string> GetLogsAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Lists networks (CLI bridge: `wslc network list`).</summary>
+    Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default);
+
+    /// <summary>Creates a network by name (CLI bridge: `wslc network create`).</summary>
+    Task CreateNetworkAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Removes a network by name (CLI bridge: `wslc network remove`).</summary>
+    Task RemoveNetworkAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Lists volumes (CLI bridge: `wslc volume list`).</summary>
+    Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct = default);
+
+    /// <summary>Creates a volume by name (CLI bridge: `wslc volume create`).</summary>
+    Task CreateVolumeAsync(string name, CancellationToken ct = default);
+
+    /// <summary>Removes a volume by name (CLI bridge: `wslc volume remove`).</summary>
+    Task RemoveVolumeAsync(string name, CancellationToken ct = default);
 }

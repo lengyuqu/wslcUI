@@ -18,11 +18,16 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _status = "就绪";
     [ObservableProperty] private ObservableCollection<ContainerInfo> _containers = new();
     [ObservableProperty] private ObservableCollection<ImageInfo> _images = new();
+    [ObservableProperty] private ObservableCollection<NetworkInfo> _networks = new();
+    [ObservableProperty] private ObservableCollection<VolumeInfo> _volumes = new();
     [ObservableProperty] private ContainerInfo? _selectedContainer;
     [ObservableProperty] private ImageInfo? _selectedImage;
+    [ObservableProperty] private NetworkInfo? _selectedNetwork;
+    [ObservableProperty] private VolumeInfo? _selectedVolume;
     [ObservableProperty] private string _pullReference = "alpine:latest";
+    [ObservableProperty] private string _newNetworkName = "";
+    [ObservableProperty] private string _newVolumeName = "";
     [ObservableProperty] private string _logs = "";
-    [ObservableProperty] private bool _isLogsOpen;
 
     public MainViewModel(IWslcClient client) => _client = client;
 
@@ -39,7 +44,13 @@ public partial class MainViewModel : ObservableObject
             var images = await _client.ListImagesAsync();
             Images = new ObservableCollection<ImageInfo>(images);
 
-            Status = $"已加载 {Containers.Count} 个容器 / {Images.Count} 个镜像";
+            var networks = await _client.ListNetworksAsync();
+            Networks = new ObservableCollection<NetworkInfo>(networks);
+
+            var volumes = await _client.ListVolumesAsync();
+            Volumes = new ObservableCollection<VolumeInfo>(volumes);
+
+            Status = $"已加载 {Containers.Count} 容器 / {Images.Count} 镜像 / {Networks.Count} 网络 / {Volumes.Count} 卷";
         }
         catch (System.Exception ex)
         {
@@ -169,7 +180,6 @@ public partial class MainViewModel : ObservableObject
         try
         {
             Logs = await _client.GetLogsAsync(SelectedContainer.Name);
-            IsLogsOpen = true;
             Status = $"{SelectedContainer.Name} 日志已加载";
         }
         catch (System.Exception ex)
@@ -180,5 +190,105 @@ public partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    [RelayCommand]
+    private async Task CreateNetworkAsync()
+    {
+        var name = NewNetworkName.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        IsBusy = true;
+        Status = $"创建网络 {name} …";
+        try
+        {
+            await _client.CreateNetworkAsync(name);
+            NewNetworkName = "";
+            await RefreshNetworksAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveNetworkAsync()
+    {
+        if (SelectedNetwork is null) return;
+        IsBusy = true;
+        Status = $"删除网络 {SelectedNetwork.Name} …";
+        try
+        {
+            await _client.RemoveNetworkAsync(SelectedNetwork.Name);
+            await RefreshNetworksAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task CreateVolumeAsync()
+    {
+        var name = NewVolumeName.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        IsBusy = true;
+        Status = $"创建卷 {name} …";
+        try
+        {
+            await _client.CreateVolumeAsync(name);
+            NewVolumeName = "";
+            await RefreshVolumesAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RemoveVolumeAsync()
+    {
+        if (SelectedVolume is null) return;
+        IsBusy = true;
+        Status = $"删除卷 {SelectedVolume.Name} …";
+        try
+        {
+            await _client.RemoveVolumeAsync(SelectedVolume.Name);
+            await RefreshVolumesAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task RefreshNetworksAsync()
+    {
+        var n = await _client.ListNetworksAsync();
+        Networks = new ObservableCollection<NetworkInfo>(n);
+    }
+
+    private async Task RefreshVolumesAsync()
+    {
+        var v = await _client.ListVolumesAsync();
+        Volumes = new ObservableCollection<VolumeInfo>(v);
     }
 }

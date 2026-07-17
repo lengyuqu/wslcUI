@@ -16,9 +16,12 @@ namespace wslcUI.Services;
 ///   - looking up a container by name  (no <c>Session.GetContainer(name)</c>)
 ///   - start / stop / remove a container by name
 ///   - remove an image, fetch container logs
+///   - networks and volumes — there is NO C# projection at all for these
+///     resources, so every network/volume operation is CLI-bridged.
 ///
 /// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c> /
-/// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c>.
+/// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c> /
+/// <c>wslc network create|ls|remove</c> / <c>wslc volume create|ls|remove</c>.
 /// See AGENTS.md → "Known SDK gaps". The executable path matches the wslc skill doc.
 /// </summary>
 internal static class WslcCli
@@ -65,6 +68,52 @@ internal static class WslcCli
         if (exit != 0)
             throw new InvalidOperationException($"wslc logs 失败: {stderr.Trim()}");
         return stdout;
+    }
+
+    // ---- networks (no SDK projection) ----
+    public static async Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct)
+    {
+        var (exit, stdout, _) = await RunAsync(new[] { "network", "ls" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseNetworkList(stdout) : new List<NetworkInfo>();
+    }
+
+    public static async Task CreateNetworkAsync(string name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("网络名称不能为空。", nameof(name));
+        var (exit, _, stderr) = await RunAsync(new[] { "network", "create", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc network create 失败: {stderr.Trim()}");
+    }
+
+    public static async Task RemoveNetworkAsync(string name, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(new[] { "network", "remove", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc network remove 失败: {stderr.Trim()}");
+    }
+
+    // ---- volumes (no SDK projection) ----
+    public static async Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct)
+    {
+        var (exit, stdout, _) = await RunAsync(new[] { "volume", "ls" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseVolumeList(stdout) : new List<VolumeInfo>();
+    }
+
+    public static async Task CreateVolumeAsync(string name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("卷名称不能为空。", nameof(name));
+        var (exit, _, stderr) = await RunAsync(new[] { "volume", "create", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc volume create 失败: {stderr.Trim()}");
+    }
+
+    public static async Task RemoveVolumeAsync(string name, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(new[] { "volume", "remove", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc volume remove 失败: {stderr.Trim()}");
     }
 
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
@@ -164,6 +213,129 @@ internal static class WslcCli
                 Name = name,
                 Image = Str("Image"),
                 Status = status,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc network ls</c> output. JSON mode is tried first; otherwise a
+    /// docker-style table parse grabbing NAME (col 2), DRIVER (col 3) and SCOPE (last col).
+    /// Column layout mirrors <c>docker network ls</c>: NETWORK ID | NAME | DRIVER | SCOPE.
+    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
+    /// </summary>
+    private static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0)
+            return new List<NetworkInfo>();
+
+        var trimmed = output.TrimStart();
+        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+        {
+            try { return ParseJsonNetworks(trimmed); }
+            catch { /* fall through to table parse */ }
+        }
+
+        var result = new List<NetworkInfo>();
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("NETWORK ID", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;                  // separator
+            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (cols.Length < 2) continue;
+
+            var name = cols[1];
+            var driver = cols.Length > 2 ? cols[2] : "";
+            var scope = cols.Length > 3 ? cols[3] : "";
+            result.Add(new NetworkInfo { Name = name, Driver = driver, Scope = scope });
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<NetworkInfo> ParseJsonNetworks(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var result = new List<NetworkInfo>();
+        if (root.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in root.EnumerateArray())
+        {
+            string Str(string key) =>
+                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString()! : "";
+            var name = Str("Name");
+            if (name.Length == 0)
+                name = Str("Id");
+            result.Add(new NetworkInfo
+            {
+                Name = name,
+                Driver = Str("Driver"),
+                Scope = Str("Scope"),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc volume ls</c> output. JSON mode is tried first; otherwise a
+    /// docker-style table parse grabbing DRIVER (col 1) and VOLUME NAME (col 2).
+    /// Column layout mirrors <c>docker volume ls</c>: DRIVER | VOLUME NAME.
+    /// TODO: validate on a real wslc 2.9.4 install and tighten column mapping.
+    /// </summary>
+    private static IReadOnlyList<VolumeInfo> ParseVolumeList(string output)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0)
+            return new List<VolumeInfo>();
+
+        var trimmed = output.TrimStart();
+        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+        {
+            try { return ParseJsonVolumes(trimmed); }
+            catch { /* fall through to table parse */ }
+        }
+
+        var result = new List<VolumeInfo>();
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("DRIVER", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;               // separator
+            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (cols.Length < 1) continue;
+
+            var driver = cols[0];
+            var name = cols.Length > 1 ? cols[1] : cols[0];
+            result.Add(new VolumeInfo { Name = name, Driver = driver });
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<VolumeInfo> ParseJsonVolumes(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var result = new List<VolumeInfo>();
+        if (root.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in root.EnumerateArray())
+        {
+            string Str(string key) =>
+                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString()! : "";
+            var name = Str("Name");
+            if (name.Length == 0)
+                name = Str("Mountpoint");
+            result.Add(new VolumeInfo
+            {
+                Name = name,
+                Driver = Str("Driver"),
+                Mountpoint = Str("Mountpoint"),
             });
         }
         return result;

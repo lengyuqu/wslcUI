@@ -1,7 +1,7 @@
 # wslcUI
 
-Windows 原生 UI 的 **WSL 容器 (wslc)** 管理工具。直接基于 `Microsoft.WSL.Containers`
-C# SDK 驱动 wslc,不封装 CLI 进程 —— 见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+Windows 原生 UI 的 **WSL 容器 (wslc)** 管理工具。以 `Microsoft.WSL.Containers`
+C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc` CLI —— 见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 技术栈
 
@@ -39,10 +39,11 @@ C# SDK 驱动 wslc,不封装 CLI 进程 —— 见 [docs/ARCHITECTURE.md](docs/A
 
 ## 已知缺口(预览期)
 
-- `WslcSdkClient` 中的**列举 / 启停**方法带 `TODO`，因为 wslc 预览 SDK 的
-  枚举与按名查找接口名需对照
-  [C# API 参考](https://wsl.dev/api-reference/csharp/) 确认。
-- 资源监控 (`wslc stats`)、network/volume 增删改、镜像自动构建
+- `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志**以及**网络 / 卷整套 CRUD**
+  桥接 `wslc` CLI（`WslcCli.cs`），因为 wslc 2.9.4 的 C# 投影没有 `Session.GetContainers()` /
+  `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影。其余 SDK 覆盖的操作（镜像列举 /
+  拉取 / 运行）继续走纯 SDK。
+- 资源监控 (`wslc stats`)、镜像自动构建
   (`<WslcImage>` MSBuild) 暂未实现。
 - SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.4 以避免破坏性变更。
 
@@ -52,17 +53,19 @@ C# SDK 驱动 wslc,不封装 CLI 进程 —— 见 [docs/ARCHITECTURE.md](docs/A
 wslcUI/
 ├── wslcUI.sln
 ├── README.md
+├── AGENTS.md                     # 给接手 agent 的速查/防坑指引
 ├── docs/ARCHITECTURE.md
 └── src/wslcUI/
     ├── wslcUI.csproj
     ├── App.xaml(.cs)            # DI 容器 + 启动
-    ├── MainWindow.xaml(.cs)     # 主窗口 (XAML + x:Bind)
+    ├── MainWindow.xaml(.cs)     # 主窗口 (Pivot: 容器/镜像/网络/卷 + x:Bind)
     ├── Program.cs                # WinUI 3 入口
     ├── app.manifest
-    ├── Models/                  # ContainerInfo / ImageInfo
+    ├── Models/                  # ContainerInfo / ImageInfo / NetworkInfo / VolumeInfo
     ├── Services/
     │   ├── IWslcClient.cs        # 后端抽象 (适配器接口)
     │   ├── WslcSdkClient.cs     # 真实 wslc SDK 实现
+    │   ├── WslcCli.cs            # 容器/网络/卷的 CLI 桥接 + 解析器
     │   └── FakeWslcClient.cs     # 离线开发用
     └── ViewModels/
         └── MainViewModel.cs      # MVVM + RelayCommand

@@ -31,6 +31,15 @@ namespace wslcUI.Services;
 ///   - DeleteContainerAsync  ← `wslc rm &lt;name&gt;`
 ///   - DeleteImageAsync      ← `wslc image rm &lt;reference&gt;`
 ///   - GetLogsAsync(name)   ← `wslc logs &lt;name&gt;`
+///
+/// Networks and volumes have NO C# projection at all, so every operation is
+/// CLI-bridged (see WslcCli.cs):
+///   - ListNetworksAsync    ← `wslc network ls`
+///   - CreateNetworkAsync   ← `wslc network create &lt;name&gt;`
+///   - RemoveNetworkAsync   ← `wslc network remove &lt;name&gt;`
+///   - ListVolumesAsync     ← `wslc volume ls`
+///   - CreateVolumeAsync    ← `wslc volume create &lt;name&gt;`
+///   - RemoveVolumeAsync    ← `wslc volume remove &lt;name&gt;`
 /// </summary>
 public sealed class WslcSdkClient : IWslcClient, IDisposable
 {
@@ -155,6 +164,22 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         WslcCli.GetLogsAsync(name, ct);
+
+    // ---- networks (no SDK projection → CLI bridge, see WslcCli.cs) ----
+    public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
+        WslcCli.ListNetworksAsync(ct);
+    public Task CreateNetworkAsync(string name, CancellationToken ct = default) =>
+        WslcCli.CreateNetworkAsync(name, ct);
+    public Task RemoveNetworkAsync(string name, CancellationToken ct = default) =>
+        WslcCli.RemoveNetworkAsync(name, ct);
+
+    // ---- volumes (no SDK projection → CLI bridge, see WslcCli.cs) ----
+    public Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct = default) =>
+        WslcCli.ListVolumesAsync(ct);
+    public Task CreateVolumeAsync(string name, CancellationToken ct = default) =>
+        WslcCli.CreateVolumeAsync(name, ct);
+    public Task RemoveVolumeAsync(string name, CancellationToken ct = default) =>
+        WslcCli.RemoveVolumeAsync(name, ct);
 
     public void Dispose()
     {

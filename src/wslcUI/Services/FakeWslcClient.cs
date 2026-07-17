@@ -51,4 +51,26 @@ public sealed class FakeWslcClient : IWslcClient
 
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         Task.FromResult($"[fake logs] container {name} is running…");
+
+    public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<NetworkInfo>>(new List<NetworkInfo>
+        {
+            new() { Name = "bridge", Driver = "bridge", Scope = "local" },
+            new() { Name = "wslcUI-net", Driver = "bridge", Scope = "local" },
+        });
+
+    public Task CreateNetworkAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task RemoveNetworkAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<VolumeInfo>>(new List<VolumeInfo>
+        {
+            new() { Name = "data-vol", Driver = "guest" },
+            new() { Name = "cache-vol", Driver = "vhd" },
+        });
+
+    public Task CreateVolumeAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task RemoveVolumeAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 }
