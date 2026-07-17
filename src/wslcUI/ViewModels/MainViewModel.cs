@@ -18,6 +18,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _status = "就绪";
     [ObservableProperty] private ObservableCollection<ContainerInfo> _containers = new();
     [ObservableProperty] private ObservableCollection<ImageInfo> _images = new();
+    [ObservableProperty] private ContainerInfo? _selectedContainer;
 
     public MainViewModel(IWslcClient client) => _client = client;
 
@@ -35,6 +36,48 @@ public partial class MainViewModel : ObservableObject
             Images = new ObservableCollection<ImageInfo>(images);
 
             Status = $"已加载 {Containers.Count} 个容器 / {Images.Count} 个镜像";
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task StartAsync()
+    {
+        if (SelectedContainer is null) return;
+        IsBusy = true;
+        Status = $"启动 {SelectedContainer.Name} …";
+        try
+        {
+            await _client.StartAsync(SelectedContainer.Name);
+            await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task StopAsync()
+    {
+        if (SelectedContainer is null) return;
+        IsBusy = true;
+        Status = $"停止 {SelectedContainer.Name} …";
+        try
+        {
+            await _client.StopAsync(SelectedContainer.Name);
+            await RefreshAsync();
         }
         catch (System.Exception ex)
         {

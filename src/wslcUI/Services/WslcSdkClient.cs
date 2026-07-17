@@ -7,16 +7,27 @@ using System.Threading.Tasks;
 using Microsoft.WSL.Containers;
 using wslcUI.Models;
 
+// Disambiguate the SDK's ImageInfo from wslcUI.Models.ImageInfo.
+using UiImageInfo = wslcUI.Models.ImageInfo;
+
 namespace wslcUI.Services;
 
 /// <summary>
-/// ⚠️ PREVIEW SDK — Microsoft.WSL.Containers 2.9.3.
-/// Member names below were transcribed from the public API overview
-/// (https://wsl.dev/api-reference/csharp/). The preview is subject to breaking
-/// changes; reconcile the following before first build if a compile error appears:
-///   - SessionSettings.MemoryMB  vs  MemorySizeInMB
-///   - Session enumeration: ListContainersAsync / ListImagesAsync (exact name)
-///   - Container lookup by name: GetContainer(name) or similar
+/// Real backend driving wslc via the Microsoft.WSL.Containers 2.9.3 SDK.
+///
+/// Coverage (verified against https://wsl.dev/api-reference/csharp/):
+///   - IsReadyAsync        ← WslcService.GetMissingComponents()
+///   - ListImagesAsync     ← Session.GetImages()               (pure SDK)
+///   - PullImageAsync      ← Session.PullImageAsync()         (pure SDK)
+///   - RunAndCaptureAsync  ← Session.CreateContainer() + Start (pure SDK)
+///
+/// SDK GAPS in 2.9.3 (the C# projection does not expose these, see
+/// wsl.dev/api-reference/csharp/known-gaps/): there is no
+/// Session.GetContainers() and no Session.GetContainer(name). Those three
+/// operations are bridged through the `wslc` CLI in WslcCli.cs:
+///   - ListContainersAsync  ← `wslc list -a`
+///   - StartAsync(name)      ← `wslc start &lt;name&gt;`
+///   - StopAsync(name)       ← `wslc stop &lt;name&gt;`
 /// </summary>
 public sealed class WslcSdkClient : IWslcClient, IDisposable
 {
@@ -29,8 +40,9 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public Task<bool> IsReadyAsync(CancellationToken ct = default)
     {
+        // GetMissingComponents() returns IReadOnlyList<Component>; empty == ready.
         var missing = WslcService.GetMissingComponents();
-        return Task.FromResult(missing == ComponentFlags.None);
+        return Task.FromResult(missing.Count == 0);
     }
 
     private async Task<Session> GetSessionAsync(CancellationToken ct)
@@ -62,20 +74,26 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct = default)
-    {
-        // TODO: confirm enumeration API against wslc.dev/api-reference/csharp/
-        var session = await GetSessionAsync(ct);
-        await Task.Yield();
-        return new List<ContainerInfo>();
-    }
+    // SDK gap → CLI bridge (see WslcCli.cs).
+    public Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct = default) =>
+        WslcCli.ListContainersAsync(ct);
 
-    public async Task<IReadOnlyList<ImageInfo>> ListImagesAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<UiImageInfo>> ListImagesAsync(CancellationToken ct = default)
     {
-        // TODO: see note in ListContainersAsync.
         var session = await GetSessionAsync(ct);
-        await Task.Yield();
-        return new List<ImageInfo>();
+        var list = new List<UiImageInfo>();
+        foreach (var img in session.GetImages())
+        {
+            var (repo, tag) = SplitName(img.Name);
+            list.Add(new UiImageInfo
+            {
+                Id = ToHex(img.Sha256),
+                Repository = repo,
+                Tag = tag,
+                Size = FormatBytes(img.Size),
+            });
+        }
+        return list;
     }
 
     public async Task PullImageAsync(
@@ -87,7 +105,7 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
         var pull = session.PullImageAsync(new PullImageOptions(reference));
         if (progress is not null)
         {
-            pull.Progress = (op, p) => progress.Report((p.Status, p.CurrentBytes, p.TotalBytes));
+            pull.Progress = (_, p) => progress!.Report((p.Status.ToString(), (long)p.CurrentBytes, (long)p.TotalBytes));
         }
         await pull;
     }
@@ -98,47 +116,61 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
         var init = new ProcessSettings
         {
-            CmdLine = new List<string>(command),
+            CommandLine = new List<string>(command),
             OutputMode = ProcessOutputMode.Event,
         };
 
-        var settings = new ContainerSettings(image)
-        {
-            InitProcess = init,
-            EnableAutoRemove = true,
-        };
+        var settings = new ContainerSettings(image) { InitProcess = init };
 
         using var container = session.CreateContainer(settings);
 
         var sb = new StringBuilder();
-        var tcs = new TaskCompletionSource<int>();
+        var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         container.InitProcess.OutputReceived += data => sb.Append(Encoding.UTF8.GetString(data));
-        container.InitProcess.ErrorReceived += data => sb.Append(Encoding.UTF8.GetString(data));
-        container.InitProcess.Exited += code => tcs.TrySetResult(code);
+        container.InitProcess.ErrorReceived  += data => sb.Append(Encoding.UTF8.GetString(data));
+        container.InitProcess.Exited        += code => tcs.TrySetResult(code);
 
         container.Start();
         await tcs.Task.WaitAsync(ct);
+        container.Delete(DeleteContainerOption.None);
         return sb.ToString();
     }
 
-    public async Task StartAsync(string name, CancellationToken ct = default)
-    {
-        // TODO: session.GetContainer(name)?.Start(); (confirm API)
-        var session = await GetSessionAsync(ct);
-        await Task.Yield();
-    }
+    // SDK gap → CLI bridge (see WslcCli.cs).
+    public Task StartAsync(string name, CancellationToken ct = default) =>
+        WslcCli.StartAsync(name, ct);
 
-    public async Task StopAsync(string name, CancellationToken ct = default)
-    {
-        // TODO: session.GetContainer(name)?.Stop(Signal.SIGTERM, TimeSpan.FromSeconds(10));
-        var session = await GetSessionAsync(ct);
-        await Task.Yield();
-    }
+    public Task StopAsync(string name, CancellationToken ct = default) =>
+        WslcCli.StopAsync(name, ct);
 
     public void Dispose()
     {
         try { _session?.Terminate(); } catch { /* best effort */ }
         _session = null;
         _gate.Dispose();
+    }
+
+    // ---- helpers ----
+
+    private static (string Repo, string Tag) SplitName(string name)
+    {
+        var i = name.LastIndexOf(':');
+        return i < 0 ? (name, "latest") : (name[..i], name[(i + 1)..]);
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
+        double v = bytes;
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        var u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return $"{v:0.##} {units[u]}";
+    }
+
+    private static string ToHex(Windows.Storage.Streams.IBuffer? buffer)
+    {
+        if (buffer is null) return "";
+        var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
+        return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
     }
 }

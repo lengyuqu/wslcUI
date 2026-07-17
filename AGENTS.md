@@ -8,7 +8,7 @@
 Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `wslc` 套一个 WinUI 3 原生 GUI 外壳。
 
 - 技术栈：**C# + .NET 8 + WinUI 3（Windows App SDK 1.6）+ CommunityToolkit.Mvvm**。
-- 后端集成 **API 优先**：直接引用 `Microsoft.WSL.Containers` NuGet 包（wslc 官方 C# 托管 SDK），**不封装 CLI**。
+- 后端集成 **API 优先 + 容器 CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举与按名启停**因 2.9.3 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs`）。
 
 ## 2. 仓库与协作
 
@@ -53,12 +53,15 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `GetSessionAsync` → 建 `SessionSettings` + `Session.Start()`（信号量单例保护）。
 - `PullImageAsync` → 带 `IProgress<(Status,Current,Total)>` 进度回调。
 - `RunAndCaptureAsync` → `CreateContainer` + 订阅 `Process` 的 `OutputReceived/ErrorReceived/Exited` 事件流，捕获 stdout/stderr。
+- `ListImagesAsync` → `Session.GetImages()`（纯 SDK，映射 `Name`/`Sha256`/`Size`/`CreatedTimestamp`）。
 - `Dispose` → 终止 Session。
 
-**⚠️ 仍是空壳（TODO，返回空列表 / 只 `await Task.Yield()`）—— 最先要补的：**
+**容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
 
-- `ListContainersAsync` / `ListImagesAsync`：枚举接口名待对照 API 参考。
-- `StartAsync(name)` / `StopAsync(name)`：按名查找 + 启停，接口名待确认。
+- `ListContainersAsync`：调 `wslc list -a`（JSON 优先，失败回退 docker 风格表格解析）。
+  ⚠️ 解析器尚未在真实 wslc 2.9.3 上验证，首次联调务必核对输出格式（`wslc list -a --format json` 是否被支持）。
+- `StartAsync(name)` / `StopAsync(name)`：分别调 `wslc start <name>` / `wslc stop <name>`，非零退出抛 `InvalidOperationException`。
+- **为什么不用 SDK**：2.9.3 的 C# 投影**没有** `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见 [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)）。所以"列出所有容器 / 按名取回引用"在纯 SDK 下做不到，CLI 桥接是唯一路径。这是对"API 优先"原则的务实例外，已在 `WslcSdkClient.cs` 顶部注释标明。
 
 **未实现**（路线图）：
 
@@ -71,14 +74,15 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 ## 6. 关键约束与坑
 
-- **API 优先，不要改回 CLI 封装**：wslc 与 SDK 同为预览、风险等价；SDK 调用少一层胶水代码，接口变更编译期可见。
+- **API 优先，但容器列举/启停是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；只有 `wslc list -a` / `start` / `stop` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
 - **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.3**（与 wslc 2.9.3.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
-- **编译前先核对 `WslcSdkClient.cs` 顶部 TODO**：`SessionSettings.MemoryMB` vs `MemorySizeInMB`、枚举方法名、`GetContainer(name)` 等预览 SDK 成员名可能需调整。
+- **已核对过的关键 SDK 成员名（2.9.3，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。
+- **待在真实 wslc 上验证**：`WslcCli.ParseList` 的表格解析（以及 `wslc list -a` 是否支持 `--format json`）；`wslc start/stop <name>` 的退出码语义。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
 
 ## 7. 建议的下一步
 
-1. 对照 https://wsl.dev/api-reference/csharp/ 补全 `ListContainersAsync` / `ListImagesAsync` / `StartAsync` / `StopAsync` 的真实实现，让 MainWindow 的"刷新列表 / 启停"真正可用。
-2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路。
+1. ✅ 列表/启停骨架已实现（镜像走 SDK、容器走 CLI 桥接）。下一步是在装有真实 wslc 2.9.3 的 Windows 上联调：验证 `WslcCli` 的 `list` 解析与 `start/stop` 退出码，必要时收紧解析。
+2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停已接好）。
 3. 评估 stats / network / volume 是否需要 CLI 兜底适配器（实现同一 `IWslcClient`）。
 4. 交互式终端（最重）留到最后。
