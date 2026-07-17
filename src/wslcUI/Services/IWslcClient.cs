@@ -40,6 +40,9 @@ public interface IWslcClient
     /// <summary>Returns captured logs for a container (CLI bridge: `wslc logs`).</summary>
     Task<string> GetLogsAsync(string name, CancellationToken ct = default);
 
+    /// <summary>Point-in-time resource usage snapshot (CLI bridge: `wslc stats --no-stream`).</summary>
+    Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct = default);
+
     /// <summary>Lists networks (CLI bridge: `wslc network list`).</summary>
     Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default);
 

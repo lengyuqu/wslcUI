@@ -7,12 +7,12 @@
 选择 SDK 直接调用,可**省掉整层「进程封装 + stdout 解析 + 重试 + 流式读取」**,
 且接口变更在编译期即可发现,而非运行时崩在字符串解析上。
 
-> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志，以及网络 / 卷整套 CRUD）**：wslc 2.9.4 的 C# 投影**没有**
+> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志，网络 / 卷整套 CRUD，以及资源监控 stats）**：wslc 2.9.4 的 C# 投影**没有**
 > `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见
-> [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志"
-> 以及"网络/卷的创建、列举、删除"在纯 SDK 下做不到。这部分在 `WslcCli.cs` 里桥接
+> [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影，也没有 stats / 资源监控端点**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志"、
+> 以及"网络/卷的创建、列举、删除"，还有"资源使用快照"在纯 SDK 下都做不到。这部分在 `WslcCli.cs` 里桥接
 > `wslc list -a` / `wslc start` / `wslc stop` / `wslc rm` / `wslc image rm` / `wslc logs`
-> 以及 `wslc network create|ls|remove` / `wslc volume create|ls|remove`。
+> 以及 `wslc network create|ls|remove` / `wslc volume create|ls|remove` / `wslc stats --no-stream`。
 > 属于对"API 优先"的有据例外，不是退回到"用 CLI 封装一切"。
 
 SDK 对象模型(Microsoft.WSL.Containers):
@@ -81,7 +81,7 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 | 网络创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc network create/remove <name>` |
 | 卷列举 | ✅ 已用 CLI 桥接 | 2.9.4 SDK 无 volume 投影，走 `wslc volume ls`（`WslcCli.ParseVolumeList`） |
 | 卷创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc volume create/remove <name>` |
-| 资源监控 (stats) | 未实现 | 预览 SDK 未明确对应端点，可能仍需 CLI 兜底 |
+| 资源监控 (stats) | ✅ 已用 CLI 桥接 | 走 `wslc stats --no-stream`（`WslcCli.ParseStats`，取消即杀进程安全网 + 独立 `RefreshStatsCommand`） |
 | 镜像自动构建 | 未实现 | 可用 SDK 的 `<WslcImage>` MSBuild 集成 |
 | 交互式终端 (exec/attach) | 未实现 | `Process` 已提供 stdin/stdout 字节流,
 需配 ConPTY / XTermSharp 终端控件渲染 |

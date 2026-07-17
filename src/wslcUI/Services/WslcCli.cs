@@ -70,6 +70,18 @@ internal static class WslcCli
         return stdout;
     }
 
+    // ---- stats (no SDK projection) ----
+    public static async Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct)
+    {
+        // `--no-stream` returns a single snapshot instead of a live stream
+        // (docker-compatible). If wslc does not honour this flag the command
+        // may stream forever; RunAsync now kills the process on cancellation.
+        // TODO: verify on a real wslc 2.9.4 install that `stats --no-stream`
+        // is supported and produces the expected table (or `--format json`).
+        var (exit, stdout, _) = await RunAsync(new[] { "stats", "--no-stream" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseStats(stdout) : new List<StatInfo>();
+    }
+
     // ---- networks (no SDK projection) ----
     public static async Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct)
     {
@@ -134,6 +146,13 @@ internal static class WslcCli
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+
+        // Safety net: if the caller cancels (e.g. a streaming command like `stats`
+        // that would otherwise never exit), kill the process so we don't hang.
+        using var _reg = ct.Register(() =>
+        {
+            try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
+        });
 
         var stdout = await proc.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
         var stderr = await proc.StandardError.ReadToEndAsync(ct).ConfigureAwait(false);
@@ -336,6 +355,43 @@ internal static class WslcCli
                 Name = name,
                 Driver = Str("Driver"),
                 Mountpoint = Str("Mountpoint"),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc stats --no-stream</c> output. Table-first (no JSON variant
+    /// attempted): docker-style columns
+    /// CONTAINER ID | NAME | CPU % | MEM USAGE / LIMIT | MEM % | NET I/O | BLOCK I/O | PIDS.
+    /// TODO: validate on a real wslc 2.9.4 install — confirm the column order and
+    /// whether `stats --no-stream` is the correct one-shot flag (vs `--format json`).
+    /// </summary>
+    private static IReadOnlyList<StatInfo> ParseStats(string output)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0)
+            return new List<StatInfo>();
+
+        var result = new List<StatInfo>();
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("CONTAINER ID", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;                    // separator
+            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (cols.Length < 2) continue;
+
+            // NAME is col 1 (col 0 is the short ID); CPU/MEM/MEM%/NET/BLOCK/PIDS follow.
+            result.Add(new StatInfo
+            {
+                Container = cols[1],
+                Cpu = cols.Length > 2 ? cols[2] : "",
+                Mem = cols.Length > 3 ? cols[3] : "",
+                MemPercent = cols.Length > 4 ? cols[4] : "",
+                NetIo = cols.Length > 5 ? cols[5] : "",
+                BlockIo = cols.Length > 6 ? cols[6] : "",
+                Pids = cols.Length > 7 ? cols[7] : "",
             });
         }
         return result;

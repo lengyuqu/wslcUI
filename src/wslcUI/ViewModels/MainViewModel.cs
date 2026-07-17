@@ -20,6 +20,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private ObservableCollection<ImageInfo> _images = new();
     [ObservableProperty] private ObservableCollection<NetworkInfo> _networks = new();
     [ObservableProperty] private ObservableCollection<VolumeInfo> _volumes = new();
+    [ObservableProperty] private ObservableCollection<StatInfo> _stats = new();
     [ObservableProperty] private ContainerInfo? _selectedContainer;
     [ObservableProperty] private ImageInfo? _selectedImage;
     [ObservableProperty] private NetworkInfo? _selectedNetwork;
@@ -181,6 +182,30 @@ public partial class MainViewModel : ObservableObject
         {
             Logs = await _client.GetLogsAsync(SelectedContainer.Name);
             Status = $"{SelectedContainer.Name} 日志已加载";
+        }
+        catch (System.Exception ex)
+        {
+            Status = $"错误: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RefreshStatsAsync()
+    {
+        IsBusy = true;
+        Status = "读取资源统计…";
+        try
+        {
+            // Stats is a one-shot snapshot, deliberately NOT part of the main
+            // RefreshCommand: `wslc stats` can stream, so it is isolated here
+            // and cancellable via the IsBusy flag / token.
+            var stats = await _client.GetStatsAsync();
+            Stats = new ObservableCollection<StatInfo>(stats);
+            Status = $"已加载 {Stats.Count} 个容器的资源统计";
         }
         catch (System.Exception ex)
         {

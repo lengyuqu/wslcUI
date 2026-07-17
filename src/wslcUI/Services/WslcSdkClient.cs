@@ -165,6 +165,10 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         WslcCli.GetLogsAsync(name, ct);
 
+    // ---- stats (no SDK projection → CLI bridge, see WslcCli.cs) ----
+    public Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct = default) =>
+        WslcCli.GetStatsAsync(ct);
+
     // ---- networks (no SDK projection → CLI bridge, see WslcCli.cs) ----
     public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
         WslcCli.ListNetworksAsync(ct);

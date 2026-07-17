@@ -52,6 +52,13 @@ public sealed class FakeWslcClient : IWslcClient
     public Task<string> GetLogsAsync(string name, CancellationToken ct = default) =>
         Task.FromResult($"[fake logs] container {name} is running…");
 
+    public Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<StatInfo>>(new List<StatInfo>
+        {
+            new() { Container = "web", Cpu = "0.52%", Mem = "14.2MiB / 2GiB", MemPercent = "0.69%", NetIo = "1.2kB / 0B", BlockIo = "0B / 0B", Pids = "12" },
+            new() { Container = "db", Cpu = "2.31%", Mem = "48.7MiB / 2GiB", MemPercent = "2.38%", NetIo = "3.4kB / 1.1kB", BlockIo = "2.0MB / 0B", Pids = "21" },
+        });
+
     public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<NetworkInfo>>(new List<NetworkInfo>
         {

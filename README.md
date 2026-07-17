@@ -39,12 +39,12 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
 
 ## 已知缺口(预览期)
 
-- `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志**以及**网络 / 卷整套 CRUD**
-  桥接 `wslc` CLI（`WslcCli.cs`），因为 wslc 2.9.4 的 C# 投影没有 `Session.GetContainers()` /
-  `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影。其余 SDK 覆盖的操作（镜像列举 /
+- `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志**、**网络 / 卷整套 CRUD**、**资源监控 stats**
+  均桥接 `wslc` CLI（`WslcCli.cs`），因为 wslc 2.9.4 的 C# 投影没有 `Session.GetContainers()` /
+  `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影、也没有 stats 端点。其余 SDK 覆盖的操作（镜像列举 /
   拉取 / 运行）继续走纯 SDK。
-- 资源监控 (`wslc stats`)、镜像自动构建
-  (`<WslcImage>` MSBuild) 暂未实现。
+- 资源监控（`wslc stats --no-stream` + `WslcCli.ParseStats`）已实现，列表为单次快照、「刷新统计」按钮独立触发。
+- 镜像自动构建 (`<WslcImage>` MSBuild) 暂未实现。
 - SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.4 以避免破坏性变更。
 
 ## 项目结构
@@ -58,10 +58,10 @@ wslcUI/
 └── src/wslcUI/
     ├── wslcUI.csproj
     ├── App.xaml(.cs)            # DI 容器 + 启动
-    ├── MainWindow.xaml(.cs)     # 主窗口 (Pivot: 容器/镜像/网络/卷 + x:Bind)
+    ├── MainWindow.xaml(.cs)     # 主窗口 (Pivot: 容器/镜像/网络/卷/统计 + x:Bind)
     ├── Program.cs                # WinUI 3 入口
     ├── app.manifest
-    ├── Models/                  # ContainerInfo / ImageInfo / NetworkInfo / VolumeInfo
+    ├── Models/                  # ContainerInfo / ImageInfo / NetworkInfo / VolumeInfo / StatInfo
     ├── Services/
     │   ├── IWslcClient.cs        # 后端抽象 (适配器接口)
     │   ├── WslcSdkClient.cs     # 真实 wslc SDK 实现
