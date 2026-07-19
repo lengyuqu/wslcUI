@@ -11,9 +11,10 @@ namespace wslcUI.Terminal;
 /// line editing, colours and full-screen apps behave correctly inside the
 /// interactive terminal (TerminalWindow).
 ///
-/// ⚠️ UNVERIFIED: written against the documented Win32 Pseudoconsole API
-/// (learn.microsoft.com/windows/console/creating-a-pseudoconsole-session)
-/// but NOT compiled/run on a real Windows+wslc machine in this session
+/// Written against the documented Win32 Pseudoconsole API and the canonical
+/// C# sample in microsoft/terminal (samples/ConptyExample):
+///   learn.microsoft.com/windows/console/creating-a-pseudoconsole-session
+/// NOT compiled/run on a real Windows+wslc machine in this session
 /// (no .NET / WSL available here). On first real run, verify:
 ///   1. CreatePseudoConsole / CreateProcessW succeed (no ACCESS_VIOLATION).
 ///   2. Typed input reaches the shell and output streams back.
@@ -24,6 +25,9 @@ internal sealed class PseudoConsole : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct Coord { public short X, Y; }
 
+    // Must match STARTUPINFOW EXACTLY — incl. the 3 "CountChars"/"FillAttribute"
+    // DWORDs that sit between dwYSize and dwFlags. Missing them shifts every
+    // later field (dwFlags, hStd*) to the wrong offset and corrupts CreateProcess.
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct StartupInfo
     {
@@ -32,6 +36,7 @@ internal sealed class PseudoConsole : IDisposable
         public string? lpDesktop;
         public string? lpTitle;
         public int dwX, dwY, dwXSize, dwYSize;
+        public int dwXCountChars, dwYCountChars, dwFillAttribute;
         public int dwFlags;
         public short wShowWindow;
         public short cbReserved2;
@@ -55,38 +60,27 @@ internal sealed class PseudoConsole : IDisposable
         public int dwThreadId;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SecurityAttributes
-    {
-        public int nLength;
-        public IntPtr lpSecurityDescriptor;
-        public int bInheritHandle;
-    }
-
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern int CreatePseudoConsole(Coord size, IntPtr hInput, IntPtr hOutput, uint dwFlags, out IntPtr phPC);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int ResizePseudoConsole(IntPtr hPC, Coord size);
+    private static extern void ResizePseudoConsole(IntPtr hPC, Coord size);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern int ClosePseudoConsole(IntPtr hPC);
+    private static extern void ClosePseudoConsole(IntPtr hPC);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, IntPtr lpPipeAttributes, uint nSize);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetHandleInformation(IntPtr hObject, uint dwMask, uint dwFlags);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool InitializeProcThreadAttributeList(IntPtr lpAttributeList, int dwAttributeCount, int dwFlags, ref int lpSize);
+    private static extern bool InitializeProcThreadAttributeList(IntPtr lpAttributeList, int dwAttributeCount, int dwFlags, ref IntPtr lpSize);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool UpdateProcThreadAttribute(
         IntPtr lpAttributeList, uint dwFlags, IntPtr Attribute, IntPtr lpValue, IntPtr cbSize, IntPtr lpPrevious, IntPtr lpReturnSize);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool DeleteProcThreadAttributeList(IntPtr lpAttributeList);
+    private static extern void DeleteProcThreadAttributeList(IntPtr lpAttributeList);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessW(
@@ -110,15 +104,12 @@ internal sealed class PseudoConsole : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
-    private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
-    private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
     private IntPtr _hPC = IntPtr.Zero;
     private IntPtr _hInRead, _hInWrite, _hOutRead, _hOutWrite;
     private IntPtr _attrList = IntPtr.Zero;
-    private IntPtr _saPtr = IntPtr.Zero;
     private ProcessInformation _pi;
     private Thread? _reader;
     private readonly CancellationTokenSource _cts = new();
@@ -131,26 +122,22 @@ internal sealed class PseudoConsole : IDisposable
     {
         var size = new Coord { X = (short)cols, Y = (short)rows };
 
-        // Security descriptor marking handles as inheritable.
-        var sa = new SecurityAttributes { nLength = Marshal.SizeOf<SecurityAttributes>(), bInheritHandle = 1 };
-        _saPtr = Marshal.AllocHGlobal(sa.nLength);
-        Marshal.StructureToPtr(sa, _saPtr, false);
-
-        if (!CreatePipe(out _hInRead, out _hInWrite, _saPtr, 0))
+        // Pipes are intentionally NON-inheritable; the pseudoconsole attaches the
+        // client via the PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE attribute list, NOT
+        // via raw handle inheritance (matches microsoft/terminal sample).
+        if (!CreatePipe(out _hInRead, out _hInWrite, IntPtr.Zero, 0))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "CreatePipe (input) 失败");
-        if (!CreatePipe(out _hOutRead, out _hOutWrite, _saPtr, 0))
+        if (!CreatePipe(out _hOutRead, out _hOutWrite, IntPtr.Zero, 0))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "CreatePipe (output) 失败");
 
-        // The master ends we keep must NOT be inherited by the child.
-        SetHandleInformation(_hInWrite, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(_hOutRead, HANDLE_FLAG_INHERIT, 0);
-
+        // hInput = read end of the input pipe; hOutput = write end of the output pipe.
         var hr = CreatePseudoConsole(size, _hInRead, _hOutWrite, 0, out _hPC);
         if (hr != 0)
             Marshal.ThrowExceptionForHR(hr);
 
         // Attribute list carrying the pseudoconsole handle.
-        int listSize = 0;
+        // lpSize is PSIZE_T → pointer-sized, so use IntPtr (not int) on 64-bit.
+        IntPtr listSize = IntPtr.Zero;
         InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref listSize); // first call -> size
         _attrList = Marshal.AllocHGlobal(listSize);
         if (!InitializeProcThreadAttributeList(_attrList, 1, 0, ref listSize))
@@ -162,12 +149,12 @@ internal sealed class PseudoConsole : IDisposable
         var si = new StartupInfoEx
         {
             StartupInfo = new StartupInfo { cb = Marshal.SizeOf<StartupInfoEx>() },
+            lpAttributeList = _attrList,
         };
-        si.lpAttributeList = _attrList;
 
         if (!CreateProcessW(
-                null, commandLine, IntPtr.Zero, IntPtr.Zero, true,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
+                EXTENDED_STARTUPINFO_PRESENT,
                 IntPtr.Zero, null, ref si, out _pi))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcessW 失败");
 
@@ -213,15 +200,13 @@ internal sealed class PseudoConsole : IDisposable
         _disposed = true;
         _cts.Cancel();
 
-        // Best-effort: kill the child so its pipes break and the reader exits.
-        try { if (_pi.hProcess != IntPtr.Zero) CloseHandle(_pi.hProcess); } catch { }
-        if (_pi.hThread != IntPtr.Zero) CloseHandle(_pi.hThread);
-
+        // Closing the pseudoconsole terminates the attached client(s).
         if (_hPC != IntPtr.Zero) { ClosePseudoConsole(_hPC); _hPC = IntPtr.Zero; }
+        if (_pi.hProcess != IntPtr.Zero) CloseHandle(_pi.hProcess);
+        if (_pi.hThread != IntPtr.Zero) CloseHandle(_pi.hThread);
         if (_hInWrite != IntPtr.Zero) { CloseHandle(_hInWrite); _hInWrite = IntPtr.Zero; }
         if (_hOutRead != IntPtr.Zero) { CloseHandle(_hOutRead); _hOutRead = IntPtr.Zero; }
         if (_attrList != IntPtr.Zero) { DeleteProcThreadAttributeList(_attrList); Marshal.FreeHGlobal(_attrList); _attrList = IntPtr.Zero; }
-        if (_saPtr != IntPtr.Zero) { Marshal.FreeHGlobal(_saPtr); _saPtr = IntPtr.Zero; }
         _cts.Dispose();
     }
 }
