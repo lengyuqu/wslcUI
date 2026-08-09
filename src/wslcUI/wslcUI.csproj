@@ -2,8 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <WindowsSdkPackageVersion>10.0.26100.80</WindowsSdkPackageVersion>
     <RootNamespace>wslcUI</RootNamespace>
     <AssemblyName>wslcUI</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -12,19 +13,26 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWinUI>true</UseWinUI>
     <EnableDefaultProgramFile>false</EnableDefaultProgramFile>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- Unpackaged WinUI 3:
          - set to true to build self-contained (no runtime install needed), or
          - leave false and install the Windows App SDK 1.6 runtime on dev machines. -->
     <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Bootstrap is done manually in Program.cs (so the HRESULT is surfaced);
+         disable the package's auto-initializer to avoid double init. -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228003" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
-    <!-- wslc container SDK (preview). Pinned to 2.9.4 to match wslc 2.9.4.0. -->
-    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.4" />
+    <!-- wslc container SDK (preview). Pinned to 2.9.4 to match wslc 2.9.4.0.
+         NOTE: nuget.org only publishes 2.9.3 (2.9.4 is a private/preview feed),
+         so local builds must use 2.9.3 — same-generation API surface.
+         Restore 2.9.4 on a machine with access to the private feed. -->
+    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.3" />
   </ItemGroup>
 
 </Project>

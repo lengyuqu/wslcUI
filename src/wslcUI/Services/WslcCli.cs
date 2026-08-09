@@ -35,8 +35,26 @@ internal static class WslcCli
 
     public static async Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "list", "-a" }, ct).ConfigureAwait(false);
+        // Ask for JSON explicitly: plain `wslc list -a` emits a Chinese-locale table
+        // ("容器 ID 名称 映像 …") that the docker-style table fallback cannot parse.
+        var (exit, stdout, _) = await RunAsync(new[] { "list", "-a", "--format", "json" }, ct).ConfigureAwait(false);
         return exit == 0 ? ParseList(stdout) : new List<ContainerInfo>();
+    }
+
+    // ---- images (CLI bridge: Session.GetImages sees only the SDK's own store) ----
+    public static async Task<IReadOnlyList<ImageInfo>> ListImagesAsync(CancellationToken ct)
+    {
+        var (exit, stdout, _) = await RunAsync(new[] { "images", "--format", "json" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            return new List<ImageInfo>();
+
+        var trimmed = stdout.TrimStart();
+        if (trimmed.StartsWith("[") || trimmed.Split('\n')[0].TrimStart().StartsWith("{"))
+        {
+            try { return ParseJsonImages(trimmed); }
+            catch { /* fall through to table parse */ }
+        }
+        return ParseImageList(stdout);
     }
 
     public static async Task StartAsync(string name, CancellationToken ct)
@@ -115,13 +133,20 @@ internal static class WslcCli
     // ---- stats (no SDK projection) ----
     public static async Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct)
     {
-        // `--no-stream` returns a single snapshot instead of a live stream
-        // (docker-compatible). If wslc does not honour this flag the command
-        // may stream forever; RunAsync now kills the process on cancellation.
-        // TODO: verify on a real wslc 2.9.4 install that `stats --no-stream`
-        // is supported and produces the expected table (or `--format json`).
-        var (exit, stdout, _) = await RunAsync(new[] { "stats", "--no-stream" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseStats(stdout) : new List<StatInfo>();
+        // wslc stats is ALREADY a one-shot snapshot — it does NOT accept
+        // `--no-stream` (that docker flag errors out). JSON mode gives stable
+        // field names; fall back to the table parse on old builds.
+        var (exit, stdout, _) = await RunAsync(new[] { "stats", "--format", "json" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            return new List<StatInfo>();
+
+        var trimmed = stdout.TrimStart();
+        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+        {
+            try { return ParseJsonStats(trimmed); }
+            catch { /* fall through to table parse */ }
+        }
+        return ParseStats(stdout);
     }
 
     // ---- networks (no SDK projection) ----
@@ -227,7 +252,9 @@ internal static class WslcCli
         foreach (var raw in lines)
         {
             var line = raw.TrimEnd('\r');
+            // wslc emits a Chinese-locale header ("容器 ID …"); accept both.
             if (line.StartsWith("CONTAINER ID", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.StartsWith("容器 ID", StringComparison.Ordinal)) continue;                 // header (zh)
             if (line.StartsWith("---", StringComparison.Ordinal)) continue;                    // separator
             var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (cols.Length < 2) continue;
@@ -252,7 +279,17 @@ internal static class WslcCli
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         if (root.ValueKind == JsonValueKind.Object)
-            root = root.RootElement; // tolerate a wrapped object
+        {
+            // tolerate a wrapped object: find the first array property
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.Value.ValueKind == JsonValueKind.Array)
+                {
+                    root = prop.Value;
+                    break;
+                }
+            }
+        }
 
         var result = new List<ContainerInfo>();
         if (root.ValueKind != JsonValueKind.Array)
@@ -267,8 +304,19 @@ internal static class WslcCli
             var id = Str("Id");
             var names = Str("Names");
             var name = names.StartsWith("/") && names.Length > 1 ? names[1..] : (names.Length > 0 ? names : Str("Name"));
-            var state = Str("State");
-            var status = state.Length > 0 ? state : Str("Status");
+            // wslc 2.9.4 emits State as a NUMBER enum (2=running, 3=stopped), not a
+            // string — read it as int when present, fall back to Status string.
+            var state = "";
+            if (item.TryGetProperty("State", out var st))
+            {
+                state = st.ValueKind switch
+                {
+                    JsonValueKind.Number => st.GetInt32().ToString(),
+                    JsonValueKind.String => st.GetString() ?? "",
+                    _ => "",
+                };
+            }
+            var status = state.Length > 0 ? MapContainerState(state) : Str("Status");
 
             result.Add(new ContainerInfo
             {
@@ -280,6 +328,15 @@ internal static class WslcCli
         }
         return result;
     }
+
+    /// <summary>Map wslc's numeric container state to a readable string.</summary>
+    private static string MapContainerState(string state) => state switch
+    {
+        "1" => "created",
+        "2" => "running",
+        "3" => "stopped",
+        _ => state.Length > 0 ? $"state {state}" : "",
+    };
 
     /// <summary>
     /// Parses <c>wslc network ls</c> output. JSON mode is tried first; otherwise a
@@ -405,7 +462,43 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// Parses <c>wslc stats --no-stream</c> output. Table-first (no JSON variant
+    /// Parses <c>wslc stats --format json</c> output. Field names are stable:
+    /// ID / Name / CPUPerc / MemUsage / MemPerc / NetIO / BlockIO / PIDs.
+    /// PIDs is a JSON NUMBER, unlike the other string fields.
+    /// </summary>
+    private static IReadOnlyList<StatInfo> ParseJsonStats(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var result = new List<StatInfo>();
+        if (root.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in root.EnumerateArray())
+        {
+            string Str(string key) =>
+                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString()! : "";
+            var pids = "";
+            if (item.TryGetProperty("PIDs", out var p) && p.ValueKind == JsonValueKind.Number)
+                pids = p.GetInt64().ToString();
+
+            result.Add(new StatInfo
+            {
+                Container = Str("Name"),
+                Cpu = Str("CPUPerc"),
+                Mem = Str("MemUsage"),
+                MemPercent = Str("MemPerc"),
+                NetIo = Str("NetIO"),
+                BlockIo = Str("BlockIO"),
+                Pids = pids,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc stats</c> output. Table-first (no JSON variant
     /// attempted): docker-style columns
     /// CONTAINER ID | NAME | CPU % | MEM USAGE / LIMIT | MEM % | NET I/O | BLOCK I/O | PIDS.
     /// (The `--no-stream` flag is supported by the CLI; only the column order is
@@ -422,7 +515,9 @@ internal static class WslcCli
         foreach (var raw in lines)
         {
             var line = raw.TrimEnd('\r');
+            // wslc emits a Chinese-locale header ("容器 ID 名称 CPU 百分比 …"); accept both.
             if (line.StartsWith("CONTAINER ID", StringComparison.OrdinalIgnoreCase)) continue; // header
+            if (line.StartsWith("容器 ID", StringComparison.Ordinal)) continue;                 // header (zh)
             if (line.StartsWith("---", StringComparison.Ordinal)) continue;                    // separator
             var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             if (cols.Length < 2) continue;
@@ -440,5 +535,80 @@ internal static class WslcCli
             });
         }
         return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc images --format json</c>. Field names: Created/Id/Repository/Size/Tag.
+    /// Id includes the "sha256:" prefix; strip it so callers can compare by hex digest.
+    /// </summary>
+    private static IReadOnlyList<ImageInfo> ParseJsonImages(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var result = new List<ImageInfo>();
+        if (root.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var item in root.EnumerateArray())
+        {
+            string Str(string key) =>
+                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString()! : "";
+            var id = Str("Id");
+            if (id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                id = id[7..];
+
+            ulong size = 0;
+            if (item.TryGetProperty("Size", out var sv) && sv.ValueKind == JsonValueKind.Number)
+                size = sv.GetUInt64();
+
+            result.Add(new ImageInfo
+            {
+                Id = id,
+                Repository = Str("Repository"),
+                Tag = Str("Tag"),
+                Size = FormatBytes(size),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc images</c> table output. Column layout:
+    /// REPOSITORY | TAG | IMAGE ID | CREATED | SIZE (REPOSITORY can be Namespacede, e.g. minio/minio).
+    /// </summary>
+    private static IReadOnlyList<ImageInfo> ParseImageList(string output)
+    {
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var result = new List<ImageInfo>();
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith("REPOSITORY", StringComparison.OrdinalIgnoreCase)) continue;
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;
+            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (cols.Length < 3) continue;
+            // cols[0]=REPOSITORY, cols[1]=TAG, cols[2]=IMAGE ID (sha256:hex)
+            var id = cols[2];
+            if (id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                id = id[7..];
+            result.Add(new ImageInfo
+            {
+                Repository = cols[0],
+                Tag = cols[1],
+                Id = id,
+                Size = cols.Length > 4 ? cols[4] : "",
+            });
+        }
+        return result;
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
+        double v = bytes;
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        var u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return $"{v:0.##} {units[u]}";
     }
 }

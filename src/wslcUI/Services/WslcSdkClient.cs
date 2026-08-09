@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.WSL.Containers;
@@ -69,11 +71,14 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
             if (_session is not null)
                 return _session;
 
+            // Session stores its own image namespace here (separate from the
+            // wslc CLI's WSL2 rootfs). ListImagesAsync bridges via the CLI
+            // AND merges with Session.GetImages() so the UI sees both.
             Directory.CreateDirectory(_storagePath);
             var settings = new SessionSettings("wslcUI", _storagePath)
             {
-                CpuCount = 2,
-                MemorySizeInMB = 2048,
+                CpuCount = 2U,
+                MemorySizeInMB = 2048U,
             };
 
             var session = new Session(settings);
@@ -93,12 +98,15 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public async Task<IReadOnlyList<UiImageInfo>> ListImagesAsync(CancellationToken ct = default)
     {
+        // Session.GetImages() sees only the Session's own storagePath (e.g. images
+        // pulled by the SDK). `wslc images` sees the CLI's WSL2 rootfs. Merge both
+        // so the UI shows the union, deduped by Id.
         var session = await GetSessionAsync(ct);
-        var list = new List<UiImageInfo>();
+        var sdkImages = new List<UiImageInfo>();
         foreach (var img in session.GetImages())
         {
             var (repo, tag) = SplitName(img.Name);
-            list.Add(new UiImageInfo
+            sdkImages.Add(new UiImageInfo
             {
                 Id = ToHex(img.Sha256),
                 Repository = repo,
@@ -106,7 +114,13 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
                 Size = FormatBytes(img.Size),
             });
         }
-        return list;
+
+        var cliImages = await WslcCli.ListImagesAsync(ct);
+
+        var byId = new Dictionary<string, UiImageInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in sdkImages) byId[i.Id] = i;
+        foreach (var i in cliImages) byId.TryAdd(i.Id, i);
+        return byId.Values.ToList();
     }
 
     public async Task PullImageAsync(
@@ -139,13 +153,13 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
         var sb = new StringBuilder();
         var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        container.InitProcess.OutputReceived += data => sb.Append(Encoding.UTF8.GetString(data));
-        container.InitProcess.ErrorReceived  += data => sb.Append(Encoding.UTF8.GetString(data));
+        container.InitProcess.OutputReceived += data => sb.Append(Encoding.UTF8.GetString(data.ToArray()));
+        container.InitProcess.ErrorReceived  += data => sb.Append(Encoding.UTF8.GetString(data.ToArray()));
         container.InitProcess.Exited        += code => tcs.TrySetResult(code);
 
         container.Start();
         await tcs.Task.WaitAsync(ct);
-        container.Delete(DeleteContainerOption.None);
+        container.Delete(DeleteContainerOption.Force);
         return sb.ToString();
     }
 

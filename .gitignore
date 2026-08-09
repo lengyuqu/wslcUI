@@ -21,5 +21,8 @@ Desktop.ini
 WslcStorage/
 wslcUI/session/
 
+## WorkBuddy local AI data (project state, not source)
+.workbuddy/
+
 ## Logs
 *.log

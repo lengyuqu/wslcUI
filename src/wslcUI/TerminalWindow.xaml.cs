@@ -33,6 +33,9 @@ public sealed partial class TerminalWindow : Window
         this.InitializeComponent();
         _container = container;
         Title = $"终端 — {container}";
+        // Set window size (WinUI 3 Window has no Height/Width XAML attributes)
+        this.AppWindow.Resize(new Windows.Graphics.SizeInt32(820, 520));
+        this.Closed += TerminalWindow_Closed;
         try
         {
             var exe = WslcCli.ExePath;
@@ -54,7 +57,7 @@ public sealed partial class TerminalWindow : Window
         DispatcherQueue.TryEnqueue(() =>
         {
             OutputText.Text += text;
-            OutputScroller.ChangeView(null, OutputScroller.ScrollableHeight, false);
+            OutputScroller.ChangeView(null, OutputScroller.ScrollableHeight, 1f);
         });
     }
 
@@ -66,9 +69,8 @@ public sealed partial class TerminalWindow : Window
         _pty?.Write(Encoding.UTF8.GetBytes(line + "\n"));
     }
 
-    protected override void OnClosed(EventArgs e)
+    private void TerminalWindow_Closed(object sender, WindowEventArgs args)
     {
         _pty?.Dispose();
-        base.OnClosed(e);
     }
 }

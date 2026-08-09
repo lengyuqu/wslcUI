@@ -27,6 +27,9 @@ public partial class App : Application
         // line above for the fake implementation:
         //     services.AddSingleton<IWslcClient, FakeWslcClient>();
 
+        // Confirmation dialogs for destructive operations (delete container/image/…).
+        services.AddSingleton<IDialogService, DialogService>();
+
         services.AddSingleton<MainViewModel>();
 
         Services = services.BuildServiceProvider();

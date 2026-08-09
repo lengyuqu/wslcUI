@@ -4,11 +4,11 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:wslcUI"
     xmlns:models="using:wslcUI.Models"
+    xmlns:conv="using:wslcUI.Converters"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="wslcUI — WSL 容器管理"
-    Height="860" Width="1100">
+    Title="wslcUI — WSL 容器管理">
 
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -19,12 +19,23 @@
         </Grid.RowDefinitions>
 
         <!-- Global toolbar -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
-            <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
-            <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}"
-                         Width="20" Height="20" />
-            <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}"
-                       VerticalAlignment="Center" />
+        <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
+                <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}"
+                             Width="20" Height="20" />
+                <TextBlock Text="{x:Bind ViewModel.Status, Mode=OneWay}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+            <InfoBar IsOpen="{x:Bind ViewModel.IsInfoBarOpen, Mode=OneWay}"
+                     Severity="{x:Bind ViewModel.InfoSeverity, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.InfoMessage, Mode=OneWay}"
+                     Title="提示"
+                     CornerRadius="4">
+                <InfoBar.ActionButton>
+                    <Button Content="关闭" Command="{x:Bind ViewModel.DismissInfoCommand}" />
+                </InfoBar.ActionButton>
+            </InfoBar>
         </StackPanel>
 
         <!-- Body: Pivot over the four resource types -->
@@ -37,11 +48,11 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <Button Content="启动" Command="{x:Bind ViewModel.StartCommand}" />
-                        <Button Content="停止" Command="{x:Bind ViewModel.StopCommand}" />
-                        <Button Content="删除" Command="{x:Bind ViewModel.DeleteContainerCommand}" />
-                        <Button Content="日志" Command="{x:Bind ViewModel.ShowLogsCommand}" />
-                        <Button Content="终端" x:Name="OpenTerminalButton" Click="OpenTerminalButton_Click" />
+                        <Button Content="启动" Command="{x:Bind ViewModel.StartCommand}" IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                        <Button Content="停止" Command="{x:Bind ViewModel.StopCommand}" IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                        <Button Content="删除" Command="{x:Bind ViewModel.DeleteContainerCommand}" IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                        <Button Content="日志" Command="{x:Bind ViewModel.ShowLogsCommand}" IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                        <Button Content="终端" x:Name="OpenTerminalButton" Click="OpenTerminalButton_Click" IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
                     </StackPanel>
                     <ListView Grid.Row="1"
                               ItemsSource="{x:Bind ViewModel.Containers, Mode=OneWay}"
@@ -77,6 +88,12 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock Grid.Row="1"
+                               Text="暂无容器。点击「刷新」加载；或先在「镜像」页拉取镜像后运行。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasContainers), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
 
@@ -91,8 +108,8 @@
                         <TextBox Width="240" VerticalAlignment="Center"
                                  PlaceholderText="镜像引用 (如 alpine:latest)"
                                  Text="{x:Bind ViewModel.PullReference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Content="拉取" Command="{x:Bind ViewModel.PullCommand}" />
-                        <Button Content="删除镜像" Command="{x:Bind ViewModel.DeleteImageCommand}" />
+                        <Button Content="拉取" Command="{x:Bind ViewModel.PullCommand}" IsEnabled="{x:Bind ViewModel.CanPull, Mode=OneWay}" />
+                        <Button Content="删除镜像" Command="{x:Bind ViewModel.DeleteImageCommand}" IsEnabled="{x:Bind ViewModel.CanActOnImage, Mode=OneWay}" />
                     </StackPanel>
                     <ListView Grid.Row="1"
                               ItemsSource="{x:Bind ViewModel.Images, Mode=OneWay}"
@@ -128,6 +145,12 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock Grid.Row="1"
+                               Text="暂无镜像。在上方输入框填入引用（如 alpine:latest）后点击「拉取」。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasImages), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
 
@@ -142,8 +165,8 @@
                         <TextBox Width="220" VerticalAlignment="Center"
                                  PlaceholderText="新网络名称"
                                  Text="{x:Bind ViewModel.NewNetworkName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Content="创建" Command="{x:Bind ViewModel.CreateNetworkCommand}" />
-                        <Button Content="删除" Command="{x:Bind ViewModel.RemoveNetworkCommand}" />
+                        <Button Content="创建" Command="{x:Bind ViewModel.CreateNetworkCommand}" IsEnabled="{x:Bind ViewModel.CanCreateNetwork, Mode=OneWay}" />
+                        <Button Content="删除" Command="{x:Bind ViewModel.RemoveNetworkCommand}" IsEnabled="{x:Bind ViewModel.CanActOnNetwork, Mode=OneWay}" />
                     </StackPanel>
                     <ListView Grid.Row="1"
                               ItemsSource="{x:Bind ViewModel.Networks, Mode=OneWay}"
@@ -179,6 +202,11 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock Grid.Row="1"
+                               Text="暂无网络。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasNetworks), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
 
@@ -193,8 +221,8 @@
                         <TextBox Width="220" VerticalAlignment="Center"
                                  PlaceholderText="新卷名称"
                                  Text="{x:Bind ViewModel.NewVolumeName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Content="创建" Command="{x:Bind ViewModel.CreateVolumeCommand}" />
-                        <Button Content="删除" Command="{x:Bind ViewModel.RemoveVolumeCommand}" />
+                        <Button Content="创建" Command="{x:Bind ViewModel.CreateVolumeCommand}" IsEnabled="{x:Bind ViewModel.CanCreateVolume, Mode=OneWay}" />
+                        <Button Content="删除" Command="{x:Bind ViewModel.RemoveVolumeCommand}" IsEnabled="{x:Bind ViewModel.CanActOnVolume, Mode=OneWay}" />
                     </StackPanel>
                     <ListView Grid.Row="1"
                               ItemsSource="{x:Bind ViewModel.Volumes, Mode=OneWay}"
@@ -226,6 +254,11 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock Grid.Row="1"
+                               Text="暂无卷。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasVolumes), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
 
@@ -288,6 +321,11 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
+                    <TextBlock Grid.Row="1"
+                               Text="暂无资源统计。点击「刷新统计」采集一次快照。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasStats), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
 
@@ -306,7 +344,7 @@
                         <TextBox Width="200" VerticalAlignment="Center"
                                  PlaceholderText="标签 (如 myimg:latest)"
                                  Text="{x:Bind ViewModel.BuildTag, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <Button Content="构建" Command="{x:Bind ViewModel.BuildImageCommand}" />
+                        <Button Content="构建" Command="{x:Bind ViewModel.BuildImageCommand}" IsEnabled="{x:Bind ViewModel.CanBuild, Mode=OneWay}" />
                     </StackPanel>
                     <ScrollViewer Grid.Row="1"
                                   BorderBrush="{ThemeResource ControlElevationBorderBrush}"
@@ -314,6 +352,12 @@
                         <TextBlock Text="{x:Bind ViewModel.BuildOutput, Mode=OneWay}"
                                    TextWrapping="Wrap" FontFamily="Consolas" Padding="8" />
                     </ScrollViewer>
+                    <TextBlock Grid.Row="1"
+                               Text="构建日志将显示在此。填写上下文目录与标签后点击「构建」。"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasBuildOutput), Mode=OneWay}" />
                 </Grid>
             </PivotItem>
         </Pivot>

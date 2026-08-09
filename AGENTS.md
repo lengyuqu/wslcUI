@@ -97,6 +97,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - 走 `wslc exec -it <name> /bin/sh`，但**不是**普通管道：用 Windows Pseudoconsole（ConPTY）P/Invoke 封装（`Services/ConPty.cs`，零外部 NuGet 依赖）给容器 shell 一个**真 TTY**，使行编辑 / 颜色 / 全屏程序正常。
 - `TerminalWindow`（`TerminalWindow.xaml(.cs)`）是独立窗口，容器页"终端"按钮打开；字节流经 `PseudoConsole.OutputReceived` 事件回传，UI 线程 `DispatcherQueue` 合入 `TextBlock`，并用正则剥掉 ANSI/OSC 转义让文本可读；输入框回车把整行 + 换行写回 PTY。
 - ⚠️ ConPTY 是 `kernel32.dll` 的 `CreatePseudoConsole`/`CreateProcessW` P/Invoke，**本会话无法编译验证**（无 .NET / WSL），属未联调代码。首次真实运行见 `ConPty.cs` 顶部 TODO 核对清单（创建是否成功 / 输入是否到达 / resize 是否生效）。完整 VT 渲染（XTermSharp / WinUI TermControl）是后续增强，当前 MVP 只显示去转义文本。
+- ✅ **P/Invoke 已对照微软官方 `microsoft/terminal` ConptyExample 做逐项自检**（2026-07-20）：修正了 2 个致命错误 —— ① `STARTUPINFOW` 缺 `dwXCountChars`/`dwYCountChars`/`dwFillAttribute` 三个 DWORD 导致结构体错位、CreateProcess 读到垃圾；② `InitializeProcThreadAttributeList` 的 `lpSize` 用了 `ref int`（4 字节），但 `SIZE_T` 是 64 位宽，64 位下尺寸被截断/越界，改为 `ref IntPtr`。另统一为「管道非继承 + `bInheritHandles=false`」的官方模式，并把 3 个 `VOID` 返回函数声明为 `void`。其余（管道方向、`PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE=0x00020016`、标志常量、`COORD` 按值传递）核对无误。
 
 **路线图（剩余可选增强）**：
 
