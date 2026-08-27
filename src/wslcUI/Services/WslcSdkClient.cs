@@ -31,7 +31,7 @@ namespace wslcUI.Services;
 ///   - StartAsync(name)      ← `wslc start &lt;name&gt;`
 ///   - StopAsync(name)       ← `wslc stop &lt;name&gt;`
 ///   - DeleteContainerAsync  ← `wslc rm &lt;name&gt;`
-///   - DeleteImageAsync      ← `wslc image rm &lt;reference&gt;`
+///   - DeleteImageAsync      ← Session.DeleteImage (session images, 2.9.9) / `wslc image rm` (CLI images)
 ///   - BuildImageAsync       ← `wslc build -t &lt;tag&gt; &lt;context&gt;`
 ///   - GetLogsAsync(name)   ← `wslc logs &lt;name&gt;`
 ///
@@ -82,6 +82,12 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
             };
 
             var session = new Session(settings);
+            // 2.9.9: surface session-level lifecycle events instead of
+            // swallowing them silently.
+            session.Terminated += reason =>
+                System.Diagnostics.Debug.WriteLine($"[wslcUI] session terminated: {reason}");
+            session.ProcessCrashed += info =>
+                System.Diagnostics.Debug.WriteLine($"[wslcUI] process crashed: {info.ProcessName} (pid {info.Pid})");
             session.Start();
             _session = session;
             return session;
@@ -174,8 +180,39 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task DeleteContainerAsync(string name, CancellationToken ct = default) =>
         WslcCli.DeleteContainerAsync(name, ct);
 
-    public Task DeleteImageAsync(string reference, CancellationToken ct = default) =>
-        WslcCli.DeleteImageAsync(reference, ct);
+    /// <summary>
+    /// Removes an image. Namespace-aware since SDK 2.9.9: images pulled through
+    /// the SDK session live in the session's own storage (invisible to `wslc image
+    /// rm`) and are deleted via <c>Session.DeleteImage</c>; everything else still
+    /// goes through the CLI bridge.
+    /// </summary>
+    public async Task DeleteImageAsync(string reference, CancellationToken ct = default)
+    {
+        Session? session = null;
+        try { session = await GetSessionAsync(ct); }
+        catch { /* session unavailable; fall through to the CLI bridge */ }
+
+        if (session is not null)
+        {
+            var sdkImage = session.GetImages().FirstOrDefault(i =>
+                string.Equals(i.Name, reference, StringComparison.OrdinalIgnoreCase));
+            if (sdkImage is not null)
+            {
+                try
+                {
+                    session.DeleteImage(reference);
+                }
+                catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException)
+                {
+                    // e.g. 0x80070020: the image is referenced by a running container.
+                    throw new InvalidOperationException($"删除会话镜像失败: {ex.Message}", ex);
+                }
+                return;
+            }
+        }
+
+        await WslcCli.DeleteImageAsync(reference, ct);
+    }
 
     // ---- image build (no SDK projection for Dockerfile builds → CLI bridge) ----
     public Task BuildImageAsync(

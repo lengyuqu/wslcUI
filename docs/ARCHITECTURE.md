@@ -76,7 +76,7 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 | 容器列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 `Session.GetContainers()`，改走 `wslc list -a`（`WslcCli.cs`） |
 | 启停(按名) | ✅ 已用 CLI 桥接 | SDK 无 `GetContainer(name)`，走 `wslc start/stop <name>` |
 | 删除容器 | ✅ 已用 CLI 桥接 | 走 `wslc rm <name>` |
-| 删除镜像 | ✅ 已用 CLI 桥接 | 走 `wslc image rm <reference>`（首次联调确认子命令） |
+| 删除镜像 | ✅ 命名空间感知 | 2.9.9 起：reference 命中 `Session.GetImages()` 走 `Session.DeleteImage`，否则 `wslc image rm`（修复 SDK 镜像 UI 可见但删不掉的 bug） |
 | 容器日志 | ✅ 已用 CLI 桥接 | 走 `wslc logs <name>`（非 `-f` 跟随） |
 | 网络列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 network 投影，走 `wslc network ls`（`WslcCli.ParseNetworkList`） |
 | 网络创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc network create/remove <name>` |
