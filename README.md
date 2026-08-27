@@ -8,21 +8,21 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
 | 层 | 选型 |
 |----|------|
 | UI 框架 | WinUI 3 (Windows App SDK 1.6) · Fluent Design |
-| 语言 / 运行时 | C# · .NET 8 (net8.0-windows10.0.19041) |
+| 语言 / 运行时 | C# · .NET 8 (net8.0-windows10.0.26100) |
 | 模式 | MVVM — CommunityToolkit.Mvvm (源生成器) |
 | 依赖注入 | Microsoft.Extensions.DependencyInjection |
-| 容器后端 | `Microsoft.WSL.Containers` 2.9.4 (wslc SDK, **preview**) |
+| 容器后端 | `Microsoft.WSL.Containers` 2.9.9 (wslc SDK, **preview**) |
 
 ## 环境前置
 
 1. **Visual Studio 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
    *Windows App SDK* (WinUI 3)。
 2. **.NET 8 SDK**。
-3. **WSL2 + wslc 2.9.4**：
+3. **WSL2 + wslc 2.9.9**：
    ```powershell
    wsl --install --no-distribution
    wsl --update
-   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 2.9.4.0
+   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 2.9.9.0
    ```
 4. WinUI 3 **unpackaged** 运行时：安装
    [Windows App SDK 1.6 运行时](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
@@ -40,13 +40,13 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
 ## 已知缺口(预览期)
 
 - `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志**、**网络 / 卷整套 CRUD**、**资源监控 stats**、**镜像构建**、**交互式终端**
-  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 2.9.4 的 C# 投影没有 `Session.GetContainers()` /
+  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 2.9.9 的 C# 投影没有 `Session.GetContainers()` /
   `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影、也没有 stats / 镜像构建端点。其余 SDK 覆盖的操作（镜像列举 /
   拉取 / 运行）继续走纯 SDK。
 - 资源监控（`wslc stats --no-stream` + `WslcCli.ParseStats`）已实现，列表为单次快照、「刷新统计」按钮独立触发。
 - 镜像构建（`wslc build -t <tag> <context>`，`WslcCli.BuildImageAsync`，逐行流式回传日志）已实现，「构建」页含上下文目录选择 + 标签 + 滚动日志。
 - 交互式终端（`wslc exec -it <name> /bin/sh` + Windows Pseudoconsole `Services/ConPty.cs` 真 TTY，`TerminalWindow` 独立窗口渲染）已实现。**ConPTY 属未联调代码**（本会话无 .NET / WSL 无法编译验证），首次真实运行见 `ConPty.cs` 顶部 TODO。
-- SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.4 以避免破坏性变更。
+- SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.9 以避免破坏性变更。
 
 ## 项目结构
 

@@ -25,14 +25,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
-    <!-- wslc container SDK (preview). Pinned to 2.9.4 to match wslc 2.9.4.0.
-         NOTE: nuget.org only publishes 2.9.3 (2.9.4 is a private/preview feed),
-         so local builds must use 2.9.3 — same-generation API surface.
-         Restore 2.9.4 on a machine with access to the private feed. -->
-    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.3" />
+    <!-- wslc container SDK (preview). Pinned to 2.9.9 to match wslc 2.9.9.0
+         (nuget.org publishes 2.9.3 and 2.9.9; 2.9.9 is the generation
+         matching the current wslc CLI). -->
+    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.9" />
   </ItemGroup>
 
 </Project>

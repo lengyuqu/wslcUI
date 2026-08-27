@@ -11,7 +11,7 @@ namespace wslcUI.Services;
 
 /// <summary>
 /// Bridge to the <c>wslc</c> CLI for the operations the Microsoft.WSL.Containers
-/// 2.9.4 SDK does NOT project into C#:
+/// 2.9.9 SDK does NOT project into C#:
 ///   - enumerating existing containers   (no <c>Session.GetContainers()</c>)
 ///   - looking up a container by name  (no <c>Session.GetContainer(name)</c>)
 ///   - start / stop / remove a container by name
@@ -304,7 +304,7 @@ internal static class WslcCli
             var id = Str("Id");
             var names = Str("Names");
             var name = names.StartsWith("/") && names.Length > 1 ? names[1..] : (names.Length > 0 ? names : Str("Name"));
-            // wslc 2.9.4 emits State as a NUMBER enum (2=running, 3=stopped), not a
+            // wslc 2.9.9 emits State as a NUMBER enum (2=running, 3=stopped), not a
             // string — read it as int when present, fall back to Status string.
             var state = "";
             if (item.TryGetProperty("State", out var st))

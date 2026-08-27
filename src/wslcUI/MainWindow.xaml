@@ -381,6 +381,6 @@
         <!-- Status bar -->
         <TextBlock Grid.Row="3" Margin="0,8,0,0"
                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                   Text="wslc 2.9.4 · Microsoft.WSL.Containers SDK (preview) + wslc CLI bridge for containers/networks/volumes" />
+                   Text="wslc 2.9.9 · Microsoft.WSL.Containers SDK (preview) + wslc CLI bridge for containers/networks/volumes" />
     </Grid>
 </Window>

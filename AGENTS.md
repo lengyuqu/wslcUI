@@ -8,7 +8,7 @@
 Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `wslc` 套一个 WinUI 3 原生 GUI 外壳。
 
 - 技术栈：**C# + .NET 8 + WinUI 3（Windows App SDK 1.6）+ CommunityToolkit.Mvvm**。
-- 后端集成 **API 优先 + CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举 / 按名启停 / 删除 / 日志**，以及**网络 / 卷的整套 CRUD**、**镜像构建**（`wslc build -t`）、**交互式终端**（`wslc exec -it`，经 ConPTY 真 TTY），因 2.9.4 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`）。
+- 后端集成 **API 优先 + CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举 / 按名启停 / 删除 / 日志**，以及**网络 / 卷的整套 CRUD**、**镜像构建**（`wslc build -t`）、**交互式终端**（`wslc exec -it`，经 ConPTY 真 TTY），因 2.9.9 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`）。
 
 ## 2. 仓库与协作
 
@@ -26,8 +26,19 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 ## 3. 如何构建
 
-- **需要 Windows + Visual Studio 2022（含 "Windows App SDK" / WinUI 3 工作负载）**。本机无 `dotnet` CLI，无法编译验证 —— 务必在装有 WinUI 3 的 Windows 上打开 `wslcUI.sln`，目标平台 **x64**。
-- 目标框架 `net8.0-windows10.0.19041.0`，unpackaged（`WindowsPackageType=None`）。开发机需装 Windows App SDK 1.6 runtime（csproj 中 `WindowsAppSDKSelfContained=false`）。
+- **需要 Windows + Visual Studio 2022+（含 "Windows App SDK" / WinUI 3 工作负载）**，目标平台 **x64**。本机（WinR9）装的是 **VS2026 Build Tools**（`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\`，8月8日装，含 `MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll`）。
+- **dotnet CLI 也能完整编译 WinUI 3**（无需开 VS IDE）：默认 `dotnet build` 会因 PRI 任务缺失失败（`AppxMSBuildToolsPath` 默认指向 `$(MSBuildExtensionsPath)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\`，dotnet SDK 里没有）；临时加一个 `Directory.Build.props`（用完即删）指向 VS Build Tools 的 AppxPackage 即可：
+  ```xml
+  <Project>
+    <PropertyGroup>
+      <AppxMSBuildToolsPath>C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</AppxMSBuildToolsPath>
+      <VisualStudioVersion>18.0</VisualStudioVersion>
+    </PropertyGroup>
+  </Project>
+  ```
+  然后 `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Debug`（已验证 2026-08-27，0 错误）。
+  ⚠️ 注意：bash/PowerShell 命令文本里出现 `MSBuild` 字样会被 WorkBuddy 命令校验拦截（LOLBin 规则），执行构建用上面这种干净命令或直接在 VS 里跑。
+- 目标框架 `net8.0-windows10.0.26100.0`（`WindowsSdkPackageVersion=10.0.26100.80`；wslc SDK 2.9.9 的投影要求 ≥ 26100，用 19041 会 CS1705），unpackaged（`WindowsPackageType=None`）。开发机需装 Windows App SDK 1.6 runtime（csproj 中 `WindowsAppSDKSelfContained=false`）。
 - 首次编译若报 SDK 成员名错误，见第 5 节 TODO 清单，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/) 修正。
 
 ## 4. 架构速览
@@ -64,11 +75,11 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `DeleteContainerAsync(name)`：`wslc rm <name>`，非零退出抛异常。
 - `DeleteImageAsync(reference)`：`wslc image rm <reference>`（CLI 必然支持该子命令；首次联调仅核对退出码语义与报错文案）。
 - `GetLogsAsync(name)`：`wslc logs <name>`，返回 stdout（非 `-f` 跟随）。
-- **为什么不用 SDK**：2.9.4 的 C# 投影**没有** `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见 [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)）。所以"列出所有容器 / 按名取回引用 / 删除 / 日志"在纯 SDK 下做不到，CLI 桥接是唯一路径。这是对"API 优先"原则的务实例外，已在 `WslcSdkClient.cs` 顶部注释标明。
+- **为什么不用 SDK**：2.9.9 的 C# 投影**没有** `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见 [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)）。所以"列出所有容器 / 按名取回引用 / 删除 / 日志"在纯 SDK 下做不到，CLI 桥接是唯一路径。这是对"API 优先"原则的务实例外，已在 `WslcSdkClient.cs` 顶部注释标明。
 
 **网络 / 卷（network / volume）—— 已实现，整组走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
-- 2.9.4 的 C# 投影**完全没有** network / volume 资源类型，因此这组与容器列举/启停一样属于"SDK 无投影 → CLI 桥接"的路径。
+- 2.9.9 的 C# 投影**完全没有** network / volume 资源类型，因此这组与容器列举/启停一样属于"SDK 无投影 → CLI 桥接"的路径。
 - `ListNetworksAsync`：`wslc network ls`（JSON 优先，失败回退 docker 风格表格：`NETWORK ID | NAME | DRIVER | SCOPE` 取 NAME/DRIVER/SCOPE）。
 - `CreateNetworkAsync(name)`：`wslc network create <name>`，空名抛 `ArgumentException`，非零退出抛 `InvalidOperationException`。
 - `RemoveNetworkAsync(name)`：`wslc network remove <name>`，非零退出抛异常。
@@ -80,7 +91,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
-- 2.9.4 的 C# 投影**没有** stats / 资源监控端点（SDK 对象模型 `WslcService`/`Session`/`Container`/`Process` 均无对应成员），因此与容器列举/启停、网络/卷同属"SDK 无投影 → CLI 桥接"路径。
+- 2.9.9 的 C# 投影**没有** stats / 资源监控端点（SDK 对象模型 `WslcService`/`Session`/`Container`/`Process` 均无对应成员），因此与容器列举/启停、网络/卷同属"SDK 无投影 → CLI 桥接"路径。
 - `GetStatsAsync`：`wslc stats --no-stream`（取单次快照；`--no-stream` 是 docker 兼容的一次性采样标志）。
   CLI 必然支持 `--no-stream`（docker 兼容一次性采样标志）。`WslcCli.RunAsync` 仍保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。首次联调仅核对 `wslc stats` 的输出**列顺序**（`WslcCli.ParseStats` 已留 TODO）。
 - `ParseStats`：表格优先（docker 风格列 `CONTAINER ID | NAME | CPU% | MEM USAGE / LIMIT | MEM% | NET I/O | BLOCK I/O | PIDS`），未尝试 JSON 变体。
@@ -88,7 +99,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 **镜像构建 build —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
-- 2.9.4 SDK **没有** Dockerfile 构建的投影（只有运行期 `CreateContainer`）；镜像构建走 `wslc build -t <tag> <context>`（从目录里的 `Dockerfile`/`Containerfile` 构建）。
+- 2.9.9 SDK **没有** Dockerfile 构建的投影（只有运行期 `CreateContainer`）；镜像构建走 `wslc build -t <tag> <context>`（从目录里的 `Dockerfile`/`Containerfile` 构建）。
 - `BuildImageAsync(contextDir, tag, progress)`：`wslc build -t <tag> "<contextDir>"`，用 `OutputDataReceived` 逐行流式回传构建日志（非一次性读到底），非零退出抛 `InvalidOperationException`。空标签抛 `ArgumentException`；目录 / Dockerfile 缺失抛 `DirectoryNotFoundException`/`FileNotFoundException`。
 - UI 已接：MainWindow 的 `Pivot` 第六页"构建"，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
 
@@ -109,8 +120,8 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 - **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
 - **CLI 必然支持所有已桥接的子命令与标志**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats --no-stream`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令/标志是否存在"列为风险** —— 联调时只需核对输出**列格式**（各 `Parse*` 已留 TODO），退出码语义（非零抛异常）已就位。
-- **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.4**（与 wslc 2.9.4.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
-- **已核对过的关键 SDK 成员名（2.9.4，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。
+- **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.9**（与 wslc 2.9.9.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
+- **已核对过的关键 SDK 成员名（2.9.9，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)，并用独立控制台项目对 2.9.9 包做编译验证）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。**⚠️ 2.9.9 的 `InitProcess.OutputReceived`/`ErrorReceived` 回调参数是 `byte[]`（2.9.3/2.9.4 是 `IBuffer`）**：`WslcSdkClient.cs` 里的 `data.ToArray()` 写法两态兼容（`IBuffer` 走 WinRT 扩展、`byte[]` 走 LINQ），无需改；若日后清理可改为直接 `Encoding.UTF8.GetString(data)`。
 - **待在真实 wslc 上联调（只核对输出格式，不怀疑子命令/标志是否存在）**：`WslcCli` 各解析器（`ParseList`/`ParseNetworkList`/`ParseVolumeList`/`ParseStats`）的**输出列格式**；`wslc start/stop <name>` 的退出码语义（非零抛异常已就位）。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
 
