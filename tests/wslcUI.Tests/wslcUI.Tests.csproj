@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      跟随 wslcUI 主项目的 TFM，保证能引用 WinUI 3 依赖 (ElementTheme 等)。
+      xUnit 测试在 Windows 上跑（开发机为 WinR9）；跨平台 unit test 套件可拆到 netstandard2.0 独立 classlib。
+    -->
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <WindowsSdkPackageVersion>10.0.26100.87</WindowsSdkPackageVersion>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsPackageType>None</WindowsPackageType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <Platforms>x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\wslcUI\wslcUI.csproj" />
+  </ItemGroup>
+
+</Project>
