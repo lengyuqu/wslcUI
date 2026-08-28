@@ -7,17 +7,17 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
 
 | 层 | 选型 |
 |----|------|
-| UI 框架 | WinUI 3 (Windows App SDK 1.6) · Fluent Design |
-| 语言 / 运行时 | C# · .NET 8 (net8.0-windows10.0.26100) |
+| UI 框架 | WinUI 3 (Windows App SDK 2.4) · Fluent Design |
+| 语言 / 运行时 | C# · .NET 10 (net10.0-windows10.0.26100) |
 | 模式 | MVVM — CommunityToolkit.Mvvm (源生成器) |
 | 依赖注入 | Microsoft.Extensions.DependencyInjection |
 | 容器后端 | `Microsoft.WSL.Containers` 2.9.9 (wslc SDK, **preview**) |
 
 ## 环境前置
 
-1. **Visual Studio 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
+1. **Visual Studio 2026 (18.x) / 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
    *Windows App SDK* (WinUI 3)。
-2. **.NET 8 SDK**。
+2. **.NET 10 SDK**。
 3. **WSL2 + wslc 2.9.9**：
    ```powershell
    wsl --install --no-distribution
@@ -25,7 +25,7 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
    & "C:\Program Files\WSL\wslc.exe" --version   # 期望 2.9.9.0
    ```
 4. WinUI 3 **unpackaged** 运行时：安装
-   [Windows App SDK 1.6 运行时](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
+   [Windows App SDK 2.4 运行时](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
    ，或在 `wslcUI.csproj` 中设 `<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>`。
 
 ## 运行

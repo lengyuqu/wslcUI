@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <!-- dotnet CLI build of WinUI 3 (unpackaged) needs the VS-supplied AppxPackage
+         targets (PRI / Appx manifest tasks), which are not part of the dotnet SDK.
+         Only fill it in when it was not already provided (e.g. building inside VS). -->
+    <AppxMSBuildToolsPath Condition="'$(AppxMSBuildToolsPath)' == ''">C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</AppxMSBuildToolsPath>
+    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">18.0</VisualStudioVersion>
+  </PropertyGroup>
+</Project>

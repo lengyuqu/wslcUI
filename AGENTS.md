@@ -27,18 +27,22 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 ## 3. 如何构建
 
 - **需要 Windows + Visual Studio 2022+（含 "Windows App SDK" / WinUI 3 工作负载）**，目标平台 **x64**。本机（WinR9）装的是 **VS2026 Build Tools**（`C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\`，8月8日装，含 `MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\Microsoft.Build.Packaging.Pri.Tasks.dll`）。
-- **dotnet CLI 也能完整编译 WinUI 3**（无需开 VS IDE）：默认 `dotnet build` 会因 PRI 任务缺失失败（`AppxMSBuildToolsPath` 默认指向 `$(MSBuildExtensionsPath)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\`，dotnet SDK 里没有）；临时加一个 `Directory.Build.props`（用完即删）指向 VS Build Tools 的 AppxPackage 即可：
+- **dotnet CLI 也能完整编译 WinUI 3**（无需开 VS IDE）：默认 `dotnet build` 会因 PRI 任务缺失失败（`AppxMSBuildToolsPath` 默认指向 `$(MSBuildExtensionsPath)\Microsoft\VisualStudio\v$(VisualStudioVersion)\AppxPackage\`，dotnet SDK 里没有）。**仓库根目录已常驻 `Directory.Build.props`** 处理这件事：
   ```xml
   <Project>
     <PropertyGroup>
-      <AppxMSBuildToolsPath>C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</AppxMSBuildToolsPath>
-      <VisualStudioVersion>18.0</VisualStudioVersion>
+      <!-- 仅当外部未提供时才填，因此在 VS 内正常构建也不受影响 -->
+      <AppxMSBuildToolsPath Condition="'$(AppxMSBuildToolsPath)' == ''">C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\MSBuild\Microsoft\VisualStudio\v18.0\AppxPackage\</AppxMSBuildToolsPath>
+      <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">18.0</VisualStudioVersion>
     </PropertyGroup>
   </Project>
   ```
-  然后 `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Debug`（已验证 2026-08-27，0 错误）。
+  直接 `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Debug`（已验证 2026-08-28，Debug/Release 均 0 错误 0 警告）。换机器只需改这一个路径。
   ⚠️ 注意：bash/PowerShell 命令文本里出现 `MSBuild` 字样会被 WorkBuddy 命令校验拦截（LOLBin 规则），执行构建用上面这种干净命令或直接在 VS 里跑。
-- 目标框架 `net8.0-windows10.0.26100.0`（`WindowsSdkPackageVersion=10.0.26100.80`；wslc SDK 2.9.9 的投影要求 ≥ 26100，用 19041 会 CS1705），unpackaged（`WindowsPackageType=None`）。开发机需装 Windows App SDK 1.6 runtime（csproj 中 `WindowsAppSDKSelfContained=false`）。
+- 目标框架 `net10.0-windows10.0.26100.0`（`WindowsSdkPackageVersion=10.0.26100.87`），unpackaged（`WindowsPackageType=None`）。开发机需装 Windows App SDK **2.4** runtime（csproj 中 `WindowsAppSDKSelfContained=false`）。
+  - ⚠️ **TFM 与 `WindowsSdkPackageVersion` 是绑定的**：SDK.Ref `10.0.26100.8x` 起带的 `WinRT.Runtime 2.3.x` 依赖 `System.Runtime 9.0.0.0`，配 `net8.0` 会直接 **CS1705**，并连锁触发 XamlCompiler 的 `WMC1509 / WMC0909 / WMC1111 / WMC9999`（报"Cannot resolve DataType"是假象，根因是 CS1705 没产出 dll）。**要留在 net8.0 就必须把 `WindowsSdkPackageVersion` 降回兼容版本**；当前选择升 TFM 到 net10.0。
+  - `TargetPlatformMinVersion` 仍为 `10.0.19041.0`（wslc SDK 2.9.9 的投影要求编译期平台版本 ≥ 26100，但运行期下限可低）。
+- **CommunityToolkit.Mvvm 8.4.x 新增诊断 `MVVMTK0045`**：WinRT/WinUI 场景下 `[ObservableProperty]` 必须写在 **partial 属性**上（而非字段），否则 39 条警告。本仓库 `MainViewModel` 已全部改成 `public partial T Name { get; set; }` 形式（C# 13 partial properties，net10 默认开启）。新增属性请沿用该写法。
 - 首次编译若报 SDK 成员名错误，见第 5 节 TODO 清单，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/) 修正。
 
 ## 4. 架构速览

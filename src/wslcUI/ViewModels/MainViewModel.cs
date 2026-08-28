@@ -18,53 +18,53 @@ public partial class MainViewModel : ObservableObject
     private readonly IDialogService? _dialogs;
     private CancellationTokenSource? _opCts;
 
-    [ObservableProperty] private bool _isBusy;
-    [ObservableProperty] private string _status = "就绪";
-    [ObservableProperty] private ObservableCollection<ContainerInfo> _containers = new();
-    [ObservableProperty] private ObservableCollection<ImageInfo> _images = new();
-    [ObservableProperty] private ObservableCollection<NetworkInfo> _networks = new();
-    [ObservableProperty] private ObservableCollection<VolumeInfo> _volumes = new();
-    [ObservableProperty] private ObservableCollection<StatInfo> _stats = new();
-    [ObservableProperty] private ContainerInfo? _selectedContainer;
-    [ObservableProperty] private ImageInfo? _selectedImage;
-    [ObservableProperty] private NetworkInfo? _selectedNetwork;
-    [ObservableProperty] private VolumeInfo? _selectedVolume;
-    [ObservableProperty] private string _pullReference = "alpine:latest";
-    [ObservableProperty] private string _newNetworkName = "";
-    [ObservableProperty] private string _newVolumeName = "";
-    [ObservableProperty] private string _logs = "";
-    [ObservableProperty] private string _buildContext = "";
-    [ObservableProperty] private string _buildTag = "myimage:latest";
-    [ObservableProperty] private string _buildOutput = "";
+    [ObservableProperty] public partial bool IsBusy { get; set; }
+    [ObservableProperty] public partial string Status { get; set; } = "就绪";
+    [ObservableProperty] public partial ObservableCollection<ContainerInfo> Containers { get; set; } = new();
+    [ObservableProperty] public partial ObservableCollection<ImageInfo> Images { get; set; } = new();
+    [ObservableProperty] public partial ObservableCollection<NetworkInfo> Networks { get; set; } = new();
+    [ObservableProperty] public partial ObservableCollection<VolumeInfo> Volumes { get; set; } = new();
+    [ObservableProperty] public partial ObservableCollection<StatInfo> Stats { get; set; } = new();
+    [ObservableProperty] public partial ContainerInfo? SelectedContainer { get; set; }
+    [ObservableProperty] public partial ImageInfo? SelectedImage { get; set; }
+    [ObservableProperty] public partial NetworkInfo? SelectedNetwork { get; set; }
+    [ObservableProperty] public partial VolumeInfo? SelectedVolume { get; set; }
+    [ObservableProperty] public partial string PullReference { get; set; } = "alpine:latest";
+    [ObservableProperty] public partial string NewNetworkName { get; set; } = "";
+    [ObservableProperty] public partial string NewVolumeName { get; set; } = "";
+    [ObservableProperty] public partial string Logs { get; set; } = "";
+    [ObservableProperty] public partial string BuildContext { get; set; } = "";
+    [ObservableProperty] public partial string BuildTag { get; set; } = "myimage:latest";
+    [ObservableProperty] public partial string BuildOutput { get; set; } = "";
 
     // --- 错误 / 提示上屏（InfoBar）---
-    [ObservableProperty] private bool _isInfoBarOpen;
-    [ObservableProperty] private string _infoMessage = "";
-    [ObservableProperty] private InfoBarSeverity _infoSeverity = InfoBarSeverity.Informational;
+    [ObservableProperty] public partial bool IsInfoBarOpen { get; set; }
+    [ObservableProperty] public partial string InfoMessage { get; set; } = "";
+    [ObservableProperty] public partial InfoBarSeverity InfoSeverity { get; set; } = InfoBarSeverity.Informational;
 
     // --- 派生状态：列表是否有数据（空状态用）---
-    [ObservableProperty] private bool _hasContainers;
-    [ObservableProperty] private bool _hasImages;
-    [ObservableProperty] private bool _hasNetworks;
-    [ObservableProperty] private bool _hasVolumes;
-    [ObservableProperty] private bool _hasStats;
-    [ObservableProperty] private bool _hasBuildOutput;
+    [ObservableProperty] public partial bool HasContainers { get; set; }
+    [ObservableProperty] public partial bool HasImages { get; set; }
+    [ObservableProperty] public partial bool HasNetworks { get; set; }
+    [ObservableProperty] public partial bool HasVolumes { get; set; }
+    [ObservableProperty] public partial bool HasStats { get; set; }
+    [ObservableProperty] public partial bool HasBuildOutput { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
-    [ObservableProperty] private bool _hasSelectedContainer;
-    [ObservableProperty] private bool _hasSelectedImage;
-    [ObservableProperty] private bool _hasSelectedNetwork;
-    [ObservableProperty] private bool _hasSelectedVolume;
+    [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
+    [ObservableProperty] public partial bool HasSelectedImage { get; set; }
+    [ObservableProperty] public partial bool HasSelectedNetwork { get; set; }
+    [ObservableProperty] public partial bool HasSelectedVolume { get; set; }
 
     // --- 派生状态：按钮是否可点（选中 / 输入 / 空闲 的组合）---
-    [ObservableProperty] private bool _canActOnContainer;
-    [ObservableProperty] private bool _canActOnImage;
-    [ObservableProperty] private bool _canActOnNetwork;
-    [ObservableProperty] private bool _canActOnVolume;
-    [ObservableProperty] private bool _canCreateNetwork;
-    [ObservableProperty] private bool _canCreateVolume;
-    [ObservableProperty] private bool _canPull;
-    [ObservableProperty] private bool _canBuild;
+    [ObservableProperty] public partial bool CanActOnContainer { get; set; }
+    [ObservableProperty] public partial bool CanActOnImage { get; set; }
+    [ObservableProperty] public partial bool CanActOnNetwork { get; set; }
+    [ObservableProperty] public partial bool CanActOnVolume { get; set; }
+    [ObservableProperty] public partial bool CanCreateNetwork { get; set; }
+    [ObservableProperty] public partial bool CanCreateVolume { get; set; }
+    [ObservableProperty] public partial bool CanPull { get; set; }
+    [ObservableProperty] public partial bool CanBuild { get; set; }
 
     /// <summary>Owner window handle, set by MainWindow so the FolderPicker can parent.</summary>
     public IntPtr OwnerHandle { get; set; }

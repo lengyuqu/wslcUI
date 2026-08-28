@@ -2,9 +2,9 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
-    <WindowsSdkPackageVersion>10.0.26100.80</WindowsSdkPackageVersion>
+    <WindowsSdkPackageVersion>10.0.26100.87</WindowsSdkPackageVersion>
     <RootNamespace>wslcUI</RootNamespace>
     <AssemblyName>wslcUI</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -16,7 +16,7 @@
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <!-- Unpackaged WinUI 3:
          - set to true to build self-contained (no runtime install needed), or
-         - leave false and install the Windows App SDK 1.6 runtime on dev machines. -->
+         - leave false and install the Windows App SDK 2.4 runtime on dev machines. -->
     <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
     <WindowsPackageType>None</WindowsPackageType>
     <!-- Bootstrap is done manually in Program.cs (so the HRESULT is surfaced);
@@ -25,9 +25,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250602001" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <!-- wslc container SDK (preview). Pinned to 2.9.9 to match wslc 2.9.9.0
          (nuget.org publishes 2.9.3 and 2.9.9; 2.9.9 is the generation
          matching the current wslc CLI). -->
