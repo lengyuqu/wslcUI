@@ -16,4 +16,13 @@
       <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}" />
     </application>
   </compatibility>
+
+  <!-- WinUI 3 unpackaged: declare the latest OS we have tested against so
+       the OS does not emulate older behaviour for compatibility shims.
+       Required by WindowsAppSDK 2.x guidance. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <maxversiontested Id="10.0.26100.0" />
+    </application>
+  </compatibility>
 </assembly>
