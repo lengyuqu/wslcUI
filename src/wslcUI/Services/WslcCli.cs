@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using wslcUI.Models;
@@ -18,13 +18,27 @@ namespace wslcUI.Services;
 ///   - remove an image, fetch container logs
 ///   - networks and volumes — there is NO C# projection at all for these
 ///     resources, so every network/volume operation is CLI-bridged.
+///   - one-shot resource snapshots       (no stats projection)
+///   - image build from a Dockerfile    (no build projection)
 ///
 /// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c> /
 /// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c> /
 /// <c>wslc network create|ls|remove</c> / <c>wslc volume create|ls|remove</c> /
-/// <c>wslc build -t &lt;tag&gt; &lt;context&gt;</c> (image build from a Dockerfile).
+/// <c>wslc stats</c> / <c>wslc build -t &lt;tag&gt; &lt;context&gt;</c>.
 /// See AGENTS.md → "Known SDK gaps". The executable path (ExePath) is also
 /// reused directly by the interactive terminal (TerminalWindow) for `wslc exec -it`.
+///
+/// <para>
+/// <b>Why we never use <c>--format json</c></b>: wslc 2.9.9 advertises a JSON
+/// format flag, but the shape is inconsistent per command — some commands emit
+/// a single object, some emit NDJSON (newline-delimited objects), some emit
+/// none at all. Going through JSON added path branches that silently returned
+/// empty lists. Table output is uniform: a single header line followed by
+/// padded data rows. We parse it with header-derived fixed-width column
+/// boundaries (<see cref="SplitByColumns"/>), which round-trips for both the
+/// Chinese-locale headers (<c>容器 ID / 名称 / 映像 / …</c>) and the English
+/// headers (<c>NETWORK ID / NAME / DRIVER / SCOPE</c>).
+/// </para>
 /// </summary>
 internal static class WslcCli
 {
@@ -35,26 +49,17 @@ internal static class WslcCli
 
     public static async Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct)
     {
-        // Ask for JSON explicitly: plain `wslc list -a` emits a Chinese-locale table
-        // ("容器 ID 名称 映像 …") that the docker-style table fallback cannot parse.
-        var (exit, stdout, _) = await RunAsync(new[] { "list", "-a", "--format", "json" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseList(stdout) : new List<ContainerInfo>();
+        // `-a` so stopped containers show too; `--no-trunc` would widen the ID
+        // column past 12 chars. We truncate to a short ID ourselves.
+        var (exit, stdout, _) = await RunAsync(new[] { "list", "-a" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseContainerList(stdout) : new List<ContainerInfo>();
     }
 
     // ---- images (CLI bridge: Session.GetImages sees only the SDK's own store) ----
     public static async Task<IReadOnlyList<ImageInfo>> ListImagesAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "images", "--format", "json" }, ct).ConfigureAwait(false);
-        if (exit != 0)
-            return new List<ImageInfo>();
-
-        var trimmed = stdout.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.Split('\n')[0].TrimStart().StartsWith("{"))
-        {
-            try { return ParseJsonImages(trimmed); }
-            catch { /* fall through to table parse */ }
-        }
-        return ParseImageList(stdout);
+        var (exit, stdout, _) = await RunAsync(new[] { "images" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseImageList(stdout) : new List<ImageInfo>();
     }
 
     public static async Task StartAsync(string name, CancellationToken ct)
@@ -130,23 +135,14 @@ internal static class WslcCli
         return stdout;
     }
 
-    // ---- stats (no SDK projection) ----
+    // ---- stats (no SDK projection). wslc stats is ALREADY a one-shot snapshot:
+    // it does not stream and does not accept docker's `--no-stream` flag (that
+    // errors with "选项名称未被识别"). It also offers a `--format json` flag but
+    // we deliberately skip it — see class doc. ----
     public static async Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct)
     {
-        // wslc stats is ALREADY a one-shot snapshot — it does NOT accept
-        // `--no-stream` (that docker flag errors out). JSON mode gives stable
-        // field names; fall back to the table parse on old builds.
-        var (exit, stdout, _) = await RunAsync(new[] { "stats", "--format", "json" }, ct).ConfigureAwait(false);
-        if (exit != 0)
-            return new List<StatInfo>();
-
-        var trimmed = stdout.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
-        {
-            try { return ParseJsonStats(trimmed); }
-            catch { /* fall through to table parse */ }
-        }
-        return ParseStats(stdout);
+        var (exit, stdout, _) = await RunAsync(new[] { "stats" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseStats(stdout) : new List<StatInfo>();
     }
 
     // ---- networks (no SDK projection) ----
@@ -214,9 +210,10 @@ internal static class WslcCli
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
 
-        // Safety net: if the caller cancels, kill the process so we don't hang on a
-        // slow or stuck CLI call. Generic guard for every bridged command (the CLI
-        // does support `--no-stream` and the other flags we use; this is just hygiene).
+        // Safety net: if the caller cancels, kill the process so we don't hang
+        // on a slow or stuck CLI call. Generic guard for every bridged command;
+        // the canceller is the only signal that breaks a hung call — wslc has
+        // no `--timeout` we can pass.
         using var _reg = ct.Register(() =>
         {
             try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
@@ -228,387 +225,335 @@ internal static class WslcCli
         return (proc.ExitCode, stdout, stderr);
     }
 
+    // ====================================================================
+    //  Table parsers
+    //
+    //  Every wslc list-style command emits the same shape: one header line
+    //  followed by zero or more padded data rows. Each parser below:
+    //    1. Skips leading blank lines and a possible `---` separator.
+    //    2. Treats the first non-empty line as the header.
+    //    3. Uses SplitByColumns to get the column header positions for that
+    //       line, then slices each subsequent row by the SAME positions.
+    //
+    //  Header cell names are then matched against the known column captions
+    //  (which come in two locales: Chinese for `list` / `stats`, English for
+    //  the rest). Matching by caption — instead of by fixed ordinal — keeps
+    //  the parser stable across wslc build changes that add, drop or
+    //  reorder columns.
+    // ====================================================================
+
     /// <summary>
-    /// Parses <c>wslc list -a</c> output. JSON mode is tried first (some wslc
-    /// builds support <c>--format json</c>; if not, the table parse catches it);
-    /// otherwise a defensive docker-style table parse that reliably grabs ID (col 1),
-    /// IMAGE (col 2) and NAMES (last col).
-    /// TODO: tighten column mapping against real wslc output.
+    /// Splits a fixed-width row by column boundaries derived from <paramref
+    /// name="headerLine"/>. Returns the trimmed cell list, one per header
+    /// column. If the row is shorter than the header (last column), the
+    /// missing tail is returned as empty strings. If the row is longer
+    /// (a value spanning more characters than the column was padded for),
+    /// the spillover is folded back into the LAST cell — we never lose
+    /// data, only perfect column alignment.
     /// </summary>
-    private static IReadOnlyList<ContainerInfo> ParseList(string output)
+    /// <param name="boundaries">
+    /// Per-column start offsets in the header line. The end of column <c>i</c>
+    /// is <c>boundaries[i+1]</c> (or the header length for the last column).
+    /// </param>
+    private static List<string> SplitByColumns(int[] boundaries, string headerLen, string row)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0)
-            return new List<ContainerInfo>();
-
-        var trimmed = output.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+        var cells = new List<string>(boundaries.Length);
+        for (int i = 0; i < boundaries.Length - 1; i++)
         {
-            try { return ParseJsonList(trimmed); }
-            catch { /* fall through to table parse */ }
+            int s = boundaries[i];
+            int e = boundaries[i + 1];
+            if (s >= row.Length) { cells.Add(""); continue; }
+            // Clamp the end to row length; if this is the last column AND
+            // we hit the row end without reaching the header's column end,
+            // the value is wider than its column and we shouldn't truncate.
+            if (i == boundaries.Length - 2 && row.Length > e) e = row.Length;
+            else if (e > row.Length) e = row.Length;
+            cells.Add(row.Substring(s, e - s).Trim());
         }
-
-        var result = new List<ContainerInfo>();
-        foreach (var raw in lines)
-        {
-            var line = raw.TrimEnd('\r');
-            // wslc emits a Chinese-locale header ("容器 ID …"); accept both.
-            if (line.StartsWith("CONTAINER ID", StringComparison.OrdinalIgnoreCase)) continue; // header
-            if (line.StartsWith("容器 ID", StringComparison.Ordinal)) continue;                 // header (zh)
-            if (line.StartsWith("---", StringComparison.Ordinal)) continue;                    // separator
-            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (cols.Length < 2) continue;
-
-            var id = cols[0];
-            var image = cols[1];
-            var name = cols[^1];
-            var status = cols.Length > 3 ? cols[3] : ""; // STATUS sits before PORTS/NAMES
-            result.Add(new ContainerInfo
-            {
-                Id = id.Length > 12 ? id[..12] : id,
-                Name = name,
-                Image = image,
-                Status = status,
-            });
-        }
-        return result;
+        // Ensure count matches boundaries.Length - 1 (for short rows with no trailing data)
+        while (cells.Count < boundaries.Length - 1) cells.Add("");
+        return cells;
     }
-
-    private static IReadOnlyList<ContainerInfo> ParseJsonList(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            // tolerate a wrapped object: find the first array property
-            foreach (var prop in root.EnumerateObject())
-            {
-                if (prop.Value.ValueKind == JsonValueKind.Array)
-                {
-                    root = prop.Value;
-                    break;
-                }
-            }
-        }
-
-        var result = new List<ContainerInfo>();
-        if (root.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var item in root.EnumerateArray())
-        {
-            string Str(string key) =>
-                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()! : "";
-
-            var id = Str("Id");
-            var names = Str("Names");
-            var name = names.StartsWith("/") && names.Length > 1 ? names[1..] : (names.Length > 0 ? names : Str("Name"));
-            // wslc 2.9.9 emits State as a NUMBER enum (2=running, 3=stopped), not a
-            // string — read it as int when present, fall back to Status string.
-            var state = "";
-            if (item.TryGetProperty("State", out var st))
-            {
-                state = st.ValueKind switch
-                {
-                    JsonValueKind.Number => st.GetInt32().ToString(),
-                    JsonValueKind.String => st.GetString() ?? "",
-                    _ => "",
-                };
-            }
-            var status = state.Length > 0 ? MapContainerState(state) : Str("Status");
-
-            result.Add(new ContainerInfo
-            {
-                Id = id.Length > 12 ? id[..12] : id,
-                Name = name,
-                Image = Str("Image"),
-                Status = status,
-            });
-        }
-        return result;
-    }
-
-    /// <summary>Map wslc's numeric container state to a readable string.</summary>
-    private static string MapContainerState(string state) => state switch
-    {
-        "1" => "created",
-        "2" => "running",
-        "3" => "stopped",
-        _ => state.Length > 0 ? $"state {state}" : "",
-    };
 
     /// <summary>
-    /// Parses <c>wslc network ls</c> output. JSON mode is tried first; otherwise a
-    /// docker-style table parse grabbing NAME (col 2), DRIVER (col 3) and SCOPE (last col).
-    /// Column layout mirrors <c>docker network ls</c>: NETWORK ID | NAME | DRIVER | SCOPE.
-    /// TODO: tighten column mapping against real wslc output.
+    /// Extracts column start offsets from a wslc table header. The header
+    /// looks like one of:
+    ///   <c>容器 ID      名称      映像        已创建    状态        端口</c>
+    ///   <c>NETWORK ID   NAME      DRIVER      SCOPE</c>
+    /// Splitting on 2+ ASCII spaces gives the column captions; locating each
+    /// caption in the original header string yields the byte offset at which
+    /// that column begins. Returns a boundaries array with one extra trailing
+    /// element equal to the header length (so callers can write
+    /// <c>boundaries[i] .. boundaries[i+1]</c> for each column).
+    /// </summary>
+    private static int[]? ComputeColumnBoundaries(string headerLine)
+    {
+        var cells = Regex.Split(headerLine.TrimEnd('\r', '\n'), @"[ ]{2,}");
+        if (cells.Length == 0 || cells[0].Length == 0) return null;
+
+        var boundaries = new List<int>(cells.Length + 1);
+        var searchFrom = 0;
+        foreach (var cell in cells)
+        {
+            var trimmed = cell.Trim();
+            if (trimmed.Length == 0) continue;
+            var idx = headerLine.IndexOf(trimmed, searchFrom, StringComparison.Ordinal);
+            if (idx < 0) return null;
+            boundaries.Add(idx);
+            searchFrom = idx + trimmed.Length;
+        }
+        if (boundaries.Count == 0) return null;
+        boundaries.Add(headerLine.Length);
+        return boundaries.ToArray();
+    }
+
+    /// <summary>
+    /// Index of a column whose trimmed caption equals <paramref name="needle"/>
+    /// (case-sensitive). Returns -1 if no such column exists. Use this to make
+    /// parsers resilient to column reordering.
+    /// </summary>
+    private static int FindColumn(int[] boundaries, string headerLine, string needle)
+    {
+        for (int i = 0; i < boundaries.Length - 1; i++)
+        {
+            int s = boundaries[i];
+            int e = boundaries[i + 1];
+            if (e > headerLine.Length) e = headerLine.Length;
+            var cell = headerLine.Substring(s, e - s).Trim();
+            if (cell == needle) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc list -a</c> output. Real header observed on wslc 2.9.9.0:
+    /// <c>容器 ID      名称       映像        已创建    状态        端口</c>
+    /// (zh-CN locale). Same column order as docker: ID | NAME | IMAGE |
+    /// CREATED | STATUS | PORTS, but column CAPTIONS differ.
+    /// </summary>
+    private static IReadOnlyList<ContainerInfo> ParseContainerList(string output)
+    {
+        var result = new List<ContainerInfo>();
+        var lines = output.Split('\n');
+        int? headerIdx = null;
+        int[]? boundaries = null;
+        string headerLine = "";
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;
+            boundaries = ComputeColumnBoundaries(line);
+            if (boundaries is null || boundaries.Length < 3) continue; // skip if it doesn't look like a header
+            headerLine = line;
+            headerIdx = i;
+            break;
+        }
+        if (headerIdx is null || boundaries is null) return result;
+
+        // Locate columns by caption (id / name / image / status).
+        var idIdx = FindColumn(boundaries, headerLine, "容器 ID");
+        if (idIdx < 0) idIdx = FindColumn(boundaries, headerLine, "CONTAINER ID");
+        var nameIdx = FindColumn(boundaries, headerLine, "名称");
+        if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAME");
+        var imgIdx = FindColumn(boundaries, headerLine, "映像");
+        if (imgIdx < 0) imgIdx = FindColumn(boundaries, headerLine, "IMAGE");
+        var statusIdx = FindColumn(boundaries, headerLine, "状态");
+        if (statusIdx < 0) statusIdx = FindColumn(boundaries, headerLine, "STATUS");
+        if (idIdx < 0 || nameIdx < 0 || imgIdx < 0)
+            return result; // unrecognised header
+
+        for (int i = headerIdx.Value + 1; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            var cells = SplitByColumns(boundaries, headerLine, line);
+            if (cells.Count <= idIdx || cells.Count <= nameIdx || cells.Count <= imgIdx) continue;
+            var id = cells[idIdx];
+            if (id.Length == 0) continue;
+            if (id.Length > 12) id = id[..12]; // short ID, docker-style
+            result.Add(new ContainerInfo
+            {
+                Id = id,
+                Name = cells[nameIdx],
+                Image = cells[imgIdx],
+                Status = statusIdx >= 0 && cells.Count > statusIdx ? cells[statusIdx] : "",
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Parses <c>wslc network ls</c> output. Real header on wslc 2.9.9.0:
+    /// <c>NETWORK ID   NAME      DRIVER      SCOPE</c>
     /// </summary>
     private static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0)
-            return new List<NetworkInfo>();
-
-        var trimmed = output.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
-        {
-            try { return ParseJsonNetworks(trimmed); }
-            catch { /* fall through to table parse */ }
-        }
-
         var result = new List<NetworkInfo>();
-        foreach (var raw in lines)
+        var (headerLine, boundaries, headerIdx) = LocateHeader(output);
+        if (headerLine is null) return result;
+
+        var nameIdx = FindColumn(boundaries, headerLine, "NAME");
+        var driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
+        var scopeIdx = FindColumn(boundaries, headerLine, "SCOPE");
+        if (nameIdx < 0) return result;
+
+        var lines = output.Split('\n');
+        for (int i = headerIdx + 1; i < lines.Length; i++)
         {
-            var line = raw.TrimEnd('\r');
-            if (line.StartsWith("NETWORK ID", StringComparison.OrdinalIgnoreCase)) continue; // header
-            if (line.StartsWith("---", StringComparison.Ordinal)) continue;                  // separator
-            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (cols.Length < 2) continue;
-
-            var name = cols[1];
-            var driver = cols.Length > 2 ? cols[2] : "";
-            var scope = cols.Length > 3 ? cols[3] : "";
-            result.Add(new NetworkInfo { Name = name, Driver = driver, Scope = scope });
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<NetworkInfo> ParseJsonNetworks(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var result = new List<NetworkInfo>();
-        if (root.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var item in root.EnumerateArray())
-        {
-            string Str(string key) =>
-                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()! : "";
-            var name = Str("Name");
-            if (name.Length == 0)
-                name = Str("Id");
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            var cells = SplitByColumns(boundaries, headerLine, line);
+            if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
             result.Add(new NetworkInfo
             {
-                Name = name,
-                Driver = Str("Driver"),
-                Scope = Str("Scope"),
+                Name = cells[nameIdx],
+                Driver = driverIdx >= 0 && cells.Count > driverIdx ? cells[driverIdx] : "",
+                Scope = scopeIdx >= 0 && cells.Count > scopeIdx ? cells[scopeIdx] : "",
             });
         }
         return result;
     }
 
     /// <summary>
-    /// Parses <c>wslc volume ls</c> output. JSON mode is tried first; otherwise a
-    /// docker-style table parse grabbing DRIVER (col 1) and VOLUME NAME (col 2).
-    /// Column layout mirrors <c>docker volume ls</c>: DRIVER | VOLUME NAME.
-    /// TODO: tighten column mapping against real wslc output.
+    /// Parses <c>wslc volume ls</c> output. Real header on wslc 2.9.9.0:
+    /// <c>DRIVER   VOLUME NAME</c>
     /// </summary>
     private static IReadOnlyList<VolumeInfo> ParseVolumeList(string output)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0)
-            return new List<VolumeInfo>();
-
-        var trimmed = output.TrimStart();
-        if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
-        {
-            try { return ParseJsonVolumes(trimmed); }
-            catch { /* fall through to table parse */ }
-        }
-
         var result = new List<VolumeInfo>();
-        foreach (var raw in lines)
+        var (headerLine, boundaries, headerIdx) = LocateHeader(output);
+        if (headerLine is null) return result;
+
+        var nameIdx = FindColumn(boundaries, headerLine, "VOLUME NAME");
+        if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAME");
+        var driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
+        if (nameIdx < 0) return result;
+
+        var lines = output.Split('\n');
+        for (int i = headerIdx + 1; i < lines.Length; i++)
         {
-            var line = raw.TrimEnd('\r');
-            if (line.StartsWith("DRIVER", StringComparison.OrdinalIgnoreCase)) continue; // header
-            if (line.StartsWith("---", StringComparison.Ordinal)) continue;               // separator
-            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (cols.Length < 1) continue;
-
-            var driver = cols[0];
-            var name = cols.Length > 1 ? cols[1] : cols[0];
-            result.Add(new VolumeInfo { Name = name, Driver = driver });
-        }
-        return result;
-    }
-
-    private static IReadOnlyList<VolumeInfo> ParseJsonVolumes(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var result = new List<VolumeInfo>();
-        if (root.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var item in root.EnumerateArray())
-        {
-            string Str(string key) =>
-                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()! : "";
-            var name = Str("Name");
-            if (name.Length == 0)
-                name = Str("Mountpoint");
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            var cells = SplitByColumns(boundaries, headerLine, line);
+            if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
             result.Add(new VolumeInfo
             {
-                Name = name,
-                Driver = Str("Driver"),
-                Mountpoint = Str("Mountpoint"),
+                Name = cells[nameIdx],
+                Driver = driverIdx >= 0 && cells.Count > driverIdx ? cells[driverIdx] : "",
             });
         }
         return result;
     }
 
     /// <summary>
-    /// Parses <c>wslc stats --format json</c> output. Field names are stable:
-    /// ID / Name / CPUPerc / MemUsage / MemPerc / NetIO / BlockIO / PIDs.
-    /// PIDs is a JSON NUMBER, unlike the other string fields.
-    /// </summary>
-    private static IReadOnlyList<StatInfo> ParseJsonStats(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var result = new List<StatInfo>();
-        if (root.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var item in root.EnumerateArray())
-        {
-            string Str(string key) =>
-                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()! : "";
-            var pids = "";
-            if (item.TryGetProperty("PIDs", out var p) && p.ValueKind == JsonValueKind.Number)
-                pids = p.GetInt64().ToString();
-
-            result.Add(new StatInfo
-            {
-                Container = Str("Name"),
-                Cpu = Str("CPUPerc"),
-                Mem = Str("MemUsage"),
-                MemPercent = Str("MemPerc"),
-                NetIo = Str("NetIO"),
-                BlockIo = Str("BlockIO"),
-                Pids = pids,
-            });
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Parses <c>wslc stats</c> output. Table-first (no JSON variant
-    /// attempted): docker-style columns
-    /// CONTAINER ID | NAME | CPU % | MEM USAGE / LIMIT | MEM % | NET I/O | BLOCK I/O | PIDS.
-    /// (The `--no-stream` flag is supported by the CLI; only the column order is
-    /// worth verifying on a real install.)
-    /// TODO: tighten column mapping against real wslc output.
+    /// Parses <c>wslc stats</c> output. Real header on wslc 2.9.9.0 (zh-CN
+    /// locale): <c>容器 ID   名称   CPU 百分比   最大用量/限制   内存百分比
+    ///   网络 I/O   块 I/O   PIDS</c>. <c>stats</c> defaults to running
+    /// containers only; if there are none, wslc prints an empty table.
     /// </summary>
     private static IReadOnlyList<StatInfo> ParseStats(string output)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length == 0)
-            return new List<StatInfo>();
-
         var result = new List<StatInfo>();
-        foreach (var raw in lines)
-        {
-            var line = raw.TrimEnd('\r');
-            // wslc emits a Chinese-locale header ("容器 ID 名称 CPU 百分比 …"); accept both.
-            if (line.StartsWith("CONTAINER ID", StringComparison.OrdinalIgnoreCase)) continue; // header
-            if (line.StartsWith("容器 ID", StringComparison.Ordinal)) continue;                 // header (zh)
-            if (line.StartsWith("---", StringComparison.Ordinal)) continue;                    // separator
-            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (cols.Length < 2) continue;
+        var (headerLine, boundaries, headerIdx) = LocateHeader(output);
+        if (headerLine is null) return result;
 
-            // NAME is col 1 (col 0 is the short ID); CPU/MEM/MEM%/NET/BLOCK/PIDS follow.
+        // Locate columns by caption. Names that contain a space ("CPU 百分比",
+        // "最大用量/限制", "内存百分比", "网络 I/O", "块 I/O") match exactly in
+        // the trimmed slice (because SplitByColumns strips left/right padding
+        // but preserves internal whitespace).
+        int Idx(string caption) => FindColumn(boundaries, headerLine, caption);
+
+        var nameIdx = Idx("名称"); if (nameIdx < 0) nameIdx = Idx("NAME");
+        var cpuIdx = Idx("CPU 百分比"); if (cpuIdx < 0) cpuIdx = Idx("CPU %");
+        var memIdx = Idx("最大用量/限制"); if (memIdx < 0) memIdx = Idx("MEM USAGE / LIMIT");
+        var memPctIdx = Idx("内存百分比"); if (memPctIdx < 0) memPctIdx = Idx("MEM %");
+        var netIdx = Idx("网络 I/O"); if (netIdx < 0) netIdx = Idx("NET I/O");
+        var blkIdx = Idx("块 I/O"); if (blkIdx < 0) blkIdx = Idx("BLOCK I/O");
+        var pidsIdx = Idx("PIDS");
+        if (nameIdx < 0) return result;
+
+        var lines = output.Split('\n');
+        for (int i = headerIdx + 1; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            var cells = SplitByColumns(boundaries, headerLine, line);
+            if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
             result.Add(new StatInfo
             {
-                Container = cols[1],
-                Cpu = cols.Length > 2 ? cols[2] : "",
-                Mem = cols.Length > 3 ? cols[3] : "",
-                MemPercent = cols.Length > 4 ? cols[4] : "",
-                NetIo = cols.Length > 5 ? cols[5] : "",
-                BlockIo = cols.Length > 6 ? cols[6] : "",
-                Pids = cols.Length > 7 ? cols[7] : "",
+                Container = cells[nameIdx],
+                Cpu = cpuIdx >= 0 && cells.Count > cpuIdx ? cells[cpuIdx] : "",
+                Mem = memIdx >= 0 && cells.Count > memIdx ? cells[memIdx] : "",
+                MemPercent = memPctIdx >= 0 && cells.Count > memPctIdx ? cells[memPctIdx] : "",
+                NetIo = netIdx >= 0 && cells.Count > netIdx ? cells[netIdx] : "",
+                BlockIo = blkIdx >= 0 && cells.Count > blkIdx ? cells[blkIdx] : "",
+                Pids = pidsIdx >= 0 && cells.Count > pidsIdx ? cells[pidsIdx] : "",
             });
         }
         return result;
     }
 
     /// <summary>
-    /// Parses <c>wslc images --format json</c>. Field names: Created/Id/Repository/Size/Tag.
-    /// Id includes the "sha256:" prefix; strip it so callers can compare by hex digest.
-    /// </summary>
-    private static IReadOnlyList<ImageInfo> ParseJsonImages(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
-        var result = new List<ImageInfo>();
-        if (root.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var item in root.EnumerateArray())
-        {
-            string Str(string key) =>
-                item.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
-                    ? v.GetString()! : "";
-            var id = Str("Id");
-            if (id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-                id = id[7..];
-
-            ulong size = 0;
-            if (item.TryGetProperty("Size", out var sv) && sv.ValueKind == JsonValueKind.Number)
-                size = sv.GetUInt64();
-
-            result.Add(new ImageInfo
-            {
-                Id = id,
-                Repository = Str("Repository"),
-                Tag = Str("Tag"),
-                Size = FormatBytes(size),
-            });
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Parses <c>wslc images</c> table output. Column layout:
-    /// REPOSITORY | TAG | IMAGE ID | CREATED | SIZE (REPOSITORY can be Namespacede, e.g. minio/minio).
+    /// Parses <c>wslc images</c> output. Real header on wslc 2.9.9.0:
+    /// <c>REPOSITORY   TAG   IMAGE ID   CREATED   SIZE</c>. SIZE is the
+    /// truncated form (column padding clips the unit at ~5 chars; e.g.
+    /// "4.45" instead of "4.45MB"); if exact bytes are needed, call
+    /// <c>wslc inspect &lt;id&gt;</c> per image. The CLI's
+    /// <c>--format json</c> is not used here (see class doc).
     /// </summary>
     private static IReadOnlyList<ImageInfo> ParseImageList(string output)
     {
-        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         var result = new List<ImageInfo>();
-        foreach (var raw in lines)
+        var (headerLine, boundaries, headerIdx) = LocateHeader(output);
+        if (headerLine is null) return result;
+
+        var repoIdx = FindColumn(boundaries, headerLine, "REPOSITORY");
+        var tagIdx = FindColumn(boundaries, headerLine, "TAG");
+        var idIdx = FindColumn(boundaries, headerLine, "IMAGE ID");
+        var sizeIdx = FindColumn(boundaries, headerLine, "SIZE");
+        if (repoIdx < 0 || tagIdx < 0 || idIdx < 0) return result;
+
+        var lines = output.Split('\n');
+        for (int i = headerIdx + 1; i < lines.Length; i++)
         {
-            var line = raw.TrimEnd('\r');
-            if (line.StartsWith("REPOSITORY", StringComparison.OrdinalIgnoreCase)) continue;
-            if (line.StartsWith("---", StringComparison.Ordinal)) continue;
-            var cols = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (cols.Length < 3) continue;
-            // cols[0]=REPOSITORY, cols[1]=TAG, cols[2]=IMAGE ID (sha256:hex)
-            var id = cols[2];
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            var cells = SplitByColumns(boundaries, headerLine, line);
+            if (cells.Count <= idIdx || cells[idIdx].Length == 0) continue;
+            var id = cells[idIdx];
             if (id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
                 id = id[7..];
             result.Add(new ImageInfo
             {
-                Repository = cols[0],
-                Tag = cols[1],
+                Repository = cells[repoIdx],
+                Tag = tagIdx >= 0 && cells.Count > tagIdx ? cells[tagIdx] : "",
                 Id = id,
-                Size = cols.Length > 4 ? cols[4] : "",
+                Size = sizeIdx >= 0 && cells.Count > sizeIdx ? cells[sizeIdx] : "",
             });
         }
         return result;
     }
 
-    private static string FormatBytes(ulong bytes)
+    /// <summary>
+    /// Scans <paramref name="output"/> for the first non-empty, non-separator
+    /// line that splits into at least two columns of header cells, and
+    /// returns its text + boundaries + index. Returns (null, _, -1) if no
+    /// header is found.
+    /// </summary>
+    private static (string? Header, int[] Boundaries, int HeaderIndex) LocateHeader(string output)
     {
-        double v = bytes;
-        string[] units = { "B", "KB", "MB", "GB", "TB" };
-        var u = 0;
-        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
-        return $"{v:0.##} {units[u]}";
+        var lines = output.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+            if (line.StartsWith("---", StringComparison.Ordinal)) continue;
+            var b = ComputeColumnBoundaries(line);
+            if (b is null || b.Length < 3) continue;
+            return (line, b, i);
+        }
+        return (null, Array.Empty<int>(), -1);
     }
 }

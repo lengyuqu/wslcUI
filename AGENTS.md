@@ -75,8 +75,8 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 **容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
 
-- `ListContainersAsync`：调 `wslc list -a`（JSON 优先，失败回退 docker 风格表格解析）。
-  解析器尚未在真实 wslc 上联调，首次联调核对输出**列格式**即可（`wslc list -a` 子命令必然存在；`--format json` 不可用会自动回退表格解析，无需担心标志）。
+- `ListContainersAsync`：调 `wslc list -a`，用按表头推导列宽的表格解析（`WslcCli.ParseContainerList`）。wslc 2.9.9 的中文 locale 表头 `容器 ID / 名称 / 映像 / 已创建 / 状态 / 端口` 也能正确切片。**不要用 `--format json`**——wslc 2.9.9 的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期用 JSON 优先的解析路径在真实环境会静默返回空列表。
+  - 解析器已用真机 `wslc list -a` 联调，列对齐✅。若有新需求（新增列、改名）只需在 `ParseContainerList` 里加一行 `FindColumn(...)` 而不动 split。
 - `StartAsync(name)` / `StopAsync(name)`：分别调 `wslc start <name>` / `wslc stop <name>`，非零退出抛 `InvalidOperationException`。
 - `DeleteContainerAsync(name)`：`wslc rm <name>`，非零退出抛异常。
 - `DeleteImageAsync(reference)`：`wslc image rm <reference>`（CLI 必然支持该子命令；首次联调仅核对退出码语义与报错文案）。
@@ -98,9 +98,9 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 2.9.9 的 C# 投影**没有** stats / 资源监控端点（SDK 对象模型 `WslcService`/`Session`/`Container`/`Process` 均无对应成员），因此与容器列举/启停、网络/卷同属"SDK 无投影 → CLI 桥接"路径。
-- `GetStatsAsync`：`wslc stats --no-stream`（取单次快照；`--no-stream` 是 docker 兼容的一次性采样标志）。
-  CLI 必然支持 `--no-stream`（docker 兼容一次性采样标志）。`WslcCli.RunAsync` 仍保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。首次联调仅核对 `wslc stats` 的输出**列顺序**（`WslcCli.ParseStats` 已留 TODO）。
-- `ParseStats`：表格优先（docker 风格列 `CONTAINER ID | NAME | CPU% | MEM USAGE / LIMIT | MEM% | NET I/O | BLOCK I/O | PIDS`），未尝试 JSON 变体。
+- `GetStatsAsync`：`wslc stats`（wslc 默认就是一次性快照，**不接受** docker 的 `--no-stream` 标志——运行会报"选项名称未被识别"）。
+  `WslcCli.RunAsync` 保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。已用真机联调，中文表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽解析 ✅。
+- `ParseStats`：表格优先，按表头推导列宽解析；列名定位而非硬编码下标，新增列只需补一个 `Idx(...)`。
 - UI 已接：MainWindow 的 `Pivot` 第五页"统计"，含"刷新统计"按钮 + 只读列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
 
 **镜像构建 build —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
@@ -125,7 +125,9 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 ## 6. 关键约束与坑
 
 - **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
-- **CLI 必然支持所有已桥接的子命令与标志**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats --no-stream`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令/标志是否存在"列为风险** —— 联调时只需核对输出**列格式**（各 `Parse*` 已留 TODO），退出码语义（非零抛异常）已就位。
+- **CLI 必然支持所有已桥接的子命令**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats`、`build`、`exec -it`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令是否存在"列为风险** —— 联调时只需核对输出**列格式**，退出码语义（非零抛异常）已就位。
+- **`--format json` 不可靠**：wslc 2.9.9 不同子命令的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期"JSON 优先回退表格"的代码在真实环境静默返回空列表。**统一走按表头推导列宽的表格解析**（`WslcCli.SplitByColumns` / `ComputeColumnBoundaries` / `FindColumn`）。
+- **wslc stats 不接受 docker 标志**：`--no-stream` / `-f` 之类都会报"选项名称未被识别"——wslc 默认就是一次性快照，**不要**在 stats 里传 `--no-stream`。
 - **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.9**（与 wslc 2.9.9.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
 - **已核对过的关键 SDK 成员名（2.9.9，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)，并用独立控制台项目对 2.9.9 包做编译验证）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。**⚠️ 2.9.9 的 `InitProcess.OutputReceived`/`ErrorReceived` 回调参数是 `byte[]`（2.9.3/2.9.4 是 `IBuffer`）**：`WslcSdkClient.cs` 里的 `data.ToArray()` 写法两态兼容（`IBuffer` 走 WinRT 扩展、`byte[]` 走 LINQ），无需改；若日后清理可改为直接 `Encoding.UTF8.GetString(data)`。
 - **⚠️ 命名空间隔离（2.9.9 实测结论，改代码前必读）**：SDK `Session`（storagePath，如 `%LOCALAPPDATA%\wslcUI\session`）与 `wslc` CLI（WSL2 rootfs / 默认会话）**互不可见**。实测：SDK 拉的镜像、建的容器，`wslc list -a` / `wslc images` 都看不到；反之 CLI 的容器 `Session.OpenContainer` 也打不开。因此：容器列举/启停/删除/日志的 CLI 桥接**不可**迁移到 SDK（UI 管理的是 CLI 命名空间容器）；`Session.OpenContainer(name, mode)` 只能操作 SDK 会话自己 `CreateContainer` 的容器（2.9.9 新增，已实测：可打开、`Stop(Signal, TimeSpan)`、`Delete(Force)` 可用，但 **Stop 后不能 Start**，抛 `InvalidOperationException`）。
@@ -137,6 +139,6 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 
 1. ✅ 容器全生命周期骨架已实现：列表（`wslc list -a`）/ 启停 / 删除（`wslc rm`）/ 日志（`wslc logs`）走 CLI 桥接；镜像列举/拉取/运行走 SDK；镜像删除走 `wslc image rm`。UI 已含镜像输入框+拉取、删除容器/镜像按钮、日志面板。下一步在装有真实 wslc 的 Windows 上联调：核对 `WslcCli` 的 `list` 解析输出格式、`start/stop/rm/logs/image rm` 退出码语义，必要时收紧解析。
 2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停/删除 + 日志面板已接好）。
-3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。下一步在真实 wslc 上联调：核对 `network ls`/`volume ls` 输出列格式与 `create`/`remove` 退出码，必要时收紧解析（`WslcCli.ParseNetworkList`/`ParseVolumeList` 已留 TODO）。
-4. ✅ 资源监控 stats 已实现，走 `wslc stats --no-stream` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。下一步在真实 wslc 上联调：核对 `stats --no-stream` 的输出列顺序（`WslcCli.ParseStats` 已留 TODO）。
+3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。真机联调已通过：`wslc network create/remove` 退出码 0/非零语义正常，`network ls` 表头 `NETWORK ID / NAME / DRIVER / SCOPE` 与代码期望一致（按列宽解析），`volume ls` 表头 `DRIVER / VOLUME NAME` 同上。
+4. ✅ 资源监控 stats 已实现，走 `wslc stats` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。真机联调已通过：表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽正确切片。**注意**：wslc 不接受 `--no-stream`，默认就是一次性快照。
 5. ✅ 镜像构建 + 交互式终端均已实现（分别走 `wslc build -t` CLI 桥接 与 `wslc exec -it` + ConPTY 真 TTY）。下一步在真实 wslc 上联调：核对 build 流式输出、以及 ConPTY 的创建/输入/resize（见 `Services/ConPty.cs` 顶部 TODO）。

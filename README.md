@@ -43,7 +43,7 @@ C# SDK 为主驱动 wslc,对 SDK 无投影的容器/网络/卷操作桥接 `wslc
   均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 2.9.9 的 C# 投影没有 `Session.GetContainers()` /
   `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影、也没有 stats / 镜像构建端点。其余 SDK 覆盖的操作（镜像列举 /
   拉取 / 运行）继续走纯 SDK。
-- 资源监控（`wslc stats --no-stream` + `WslcCli.ParseStats`）已实现，列表为单次快照、「刷新统计」按钮独立触发。
+- 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 2.9.9 不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
 - 镜像构建（`wslc build -t <tag> <context>`，`WslcCli.BuildImageAsync`，逐行流式回传日志）已实现，「构建」页含上下文目录选择 + 标签 + 滚动日志。
 - 交互式终端（`wslc exec -it <name> /bin/sh` + Windows Pseudoconsole `Services/ConPty.cs` 真 TTY，`TerminalWindow` 独立窗口渲染）已实现。**ConPTY 属未联调代码**（本会话无 .NET / WSL 无法编译验证），首次真实运行见 `ConPty.cs` 顶部 TODO。
 - SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.9 以避免破坏性变更。
