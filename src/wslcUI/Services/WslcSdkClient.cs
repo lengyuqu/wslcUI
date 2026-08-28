@@ -112,12 +112,15 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
         foreach (var img in session.GetImages())
         {
             var (repo, tag) = SplitName(img.Name);
+            var hex = ToHex(img.Sha256);
             sdkImages.Add(new UiImageInfo
             {
-                Id = ToHex(img.Sha256),
+                Id = hex,
                 Repository = repo,
                 Tag = tag,
                 Size = FormatBytes(img.Size),
+                // SDK 侧能拿到完整 sha256；CLI 侧只有短 IMAGE ID，Digest 留空。
+                Digest = string.IsNullOrEmpty(hex) ? "" : "sha256:" + hex,
             });
         }
 

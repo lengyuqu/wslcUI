@@ -16,6 +16,13 @@ public partial class App : Application
     {
         this.InitializeComponent();
 
+        // 在 Application 创建阶段读取并应用主题。App 继承自 Application（DependencyObject）
+        // 且自带 RequestedTheme 属性（Window 没有 RequestedTheme），App-level 的 RequestedTheme
+        // 会被 Window.Content 及所有子元素正确继承并触发 ThemeResource 重解析。
+        // 在 MainWindow 构造之前调用，XAML 树构建期间就拿到正确的 theme。
+        var saved = UserSettings.LoadTheme();
+        if (saved is not null) this.RequestedTheme = saved.Value;
+
         DispatcherQueue = DispatcherQueue.GetForCurrentThread();
 
         var services = new ServiceCollection();

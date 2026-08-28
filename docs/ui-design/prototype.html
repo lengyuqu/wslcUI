@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>wslcUI — 界面设计原型 v2</title>
+<style>
+:root{
+  --bg-app:#1f1f1f; --bg-card:#2b2b2b; --bg-elev:#333333; --bg-hover:#ffffff0d; --bg-sel:#ffffff14;
+  --stroke:#3d3d3d; --stroke-strong:#525252;
+  --fg:#f3f3f3; --fg-2:#c2c2c2; --fg-3:#8a8a8a;
+  --accent:#4cc2ff; --accent-soft:#0e3a52; --accent-fg:#00263b;
+  --ok-fg:#6ccb8f; --ok-bg:#173528; --ok-bd:#2f6b48;
+  --stop-fg:#a6a6a6; --stop-bg:#333333; --stop-bd:#4d4d4d;
+  --busy-fg:#7fc7ff; --busy-bg:#123246; --busy-bd:#2c6d94;
+  --build-fg:#f0c674; --build-bg:#3a2f16; --build-bd:#7a6029;
+  --err-fg:#f1707d; --err-bg:#40212a; --err-bd:#8a3140;
+  --r-sm:4px; --r-md:6px; --r-lg:8px; --r-xl:12px;
+  --font:"Segoe UI Variable Text","Segoe UI",-apple-system,"Microsoft YaHei UI","PingFang SC",sans-serif;
+  --mono:"Cascadia Mono","Consolas","Sarasa Mono SC",monospace;
+}
+html[data-theme="light"]{
+  --bg-app:#f3f3f3; --bg-card:#ffffff; --bg-elev:#fafafa; --bg-hover:#00000008; --bg-sel:#0000000f;
+  --stroke:#e2e2e2; --stroke-strong:#c8c8c8;
+  --fg:#1b1b1b; --fg-2:#4a4a4a; --fg-3:#767676;
+  --accent:#0078d4; --accent-soft:#e6f2fb; --accent-fg:#ffffff;
+  --ok-fg:#0f6e3f; --ok-bg:#e7f5ec; --ok-bd:#8ed3ab;
+  --stop-fg:#5a5a5a; --stop-bg:#f0f0f0; --stop-bd:#cfcfcf;
+  --busy-fg:#0b5c8a; --busy-bg:#e6f2fb; --busy-bd:#8ec7ec;
+  --build-fg:#8a5a00; --build-bg:#fdf3dd; --build-bd:#e0b458;
+  --err-fg:#a4262c; --err-bg:#fdeced; --err-bd:#f0a4ac;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#111;font-family:var(--font);color:var(--fg);display:flex;justify-content:center;padding:16px;-webkit-font-smoothing:antialiased}
+.shell{width:100%;max-width:1440px;height:calc(100vh - 32px);min-height:760px;background:var(--bg-app);border:1px solid var(--stroke);border-radius:var(--r-xl);overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px #0008}
+
+/* ---------- 标题栏 ---------- */
+.titlebar{height:40px;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid var(--stroke);flex:0 0 auto}
+.brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.brand .sub{font-weight:400;color:var(--fg-3);font-size:12px}
+.tb-spacer{flex:1}
+.chip{border:1px solid var(--stroke-strong);background:transparent;color:var(--fg-2);border-radius:var(--r-sm);padding:3px 9px;font-size:12px;cursor:pointer;font-family:inherit}
+.chip:hover{background:var(--bg-hover);color:var(--fg)}
+.chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.demo{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-3)}
+
+/* ---------- 主体三栏 ---------- */
+.body{flex:1;display:grid;grid-template-columns:220px minmax(0,1fr) 340px;min-height:0}
+body[data-nav="collapsed"] .body{grid-template-columns:56px minmax(0,1fr) 340px}
+body[data-detail="hidden"] .body{grid-template-columns:220px minmax(0,1fr) 0}
+body[data-nav="collapsed"][data-detail="hidden"] .body{grid-template-columns:56px minmax(0,1fr) 0}
+
+/* ---------- 导航 ---------- */
+.nav{background:var(--bg-elev);border-right:1px solid var(--stroke);padding:8px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.nav-item{position:relative;display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-md);cursor:pointer;font-size:13px;color:var(--fg-2);border:1px solid transparent;white-space:nowrap}
+.nav-item:hover{background:var(--bg-hover);color:var(--fg)}
+.nav-item.active{background:var(--bg-sel);color:var(--fg);border-color:var(--stroke)}
+.nav-item.active::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);width:3px;height:16px;border-radius:2px;background:var(--accent)}
+.nav-item svg{flex:0 0 16px}
+.nav-item .count{margin-left:auto;font-size:11px;color:var(--fg-3);font-variant-numeric:tabular-nums}
+.nav-sep{height:1px;background:var(--stroke);margin:8px 6px}
+.nav-foot{margin-top:auto;font-size:11px;color:var(--fg-3);padding:8px 10px;line-height:1.5}
+body[data-nav="collapsed"] .nav-item .label,body[data-nav="collapsed"] .nav-item .count,body[data-nav="collapsed"] .nav-foot{display:none}
+body[data-nav="collapsed"] .nav-item{justify-content:center}
+
+/* ---------- 内容区 ---------- */
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.cmdbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--stroke);flex:0 0 auto;flex-wrap:wrap}
+.page-title{font-size:15px;font-weight:600}
+.search{display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--stroke-strong);border-radius:var(--r-md);padding:5px 10px;width:220px}
+.search input{border:0;background:transparent;outline:0;color:var(--fg);font-family:inherit;font-size:12.5px;width:100%}
+.search input::placeholder{color:var(--fg-3)}
+.btn{display:inline-flex;align-items:center;gap:6px;border-radius:var(--r-md);border:1px solid var(--stroke-strong);background:var(--bg-card);color:var(--fg);padding:6px 12px;font-size:12.5px;cursor:pointer;font-family:inherit;white-space:nowrap}
+.btn:hover{background:var(--bg-hover)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn.danger{color:var(--err-fg);border-color:var(--err-bd)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.ghost:hover{background:var(--bg-hover);border-color:var(--stroke)}
+.btn.sm{padding:4px 9px;font-size:12px}
+.spacer{flex:1}
+.meta{font-size:12px;color:var(--fg-3);font-variant-numeric:tabular-nums}
+
+/* ---------- 列表 ---------- */
+.scroll{flex:1;overflow:auto;min-height:0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{position:sticky;top:0;z-index:2;background:var(--bg-app);text-align:left;font-size:11.5px;font-weight:600;color:var(--fg-3);padding:8px 12px;border-bottom:1px solid var(--stroke);cursor:pointer;user-select:none;white-space:nowrap}
+thead th:hover{color:var(--fg)}
+thead th .arrow{opacity:0;margin-left:3px;font-size:9px}
+thead th.sorted .arrow{opacity:1;color:var(--accent)}
+tbody td{padding:9px 12px;border-bottom:1px solid var(--stroke);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--bg-hover)}
+tbody tr.sel{background:var(--bg-sel);box-shadow:inset 2px 0 0 var(--accent)}
+.mono{font-family:var(--mono);font-size:12px}
+.strong{font-weight:600}
+.dim{color:var(--fg-3)}
+.row-actions{opacity:0;display:flex;gap:4px;justify-content:flex-end}
+tr:hover .row-actions,tr.sel .row-actions{opacity:1}
+.bar{display:inline-block;width:52px;height:4px;border-radius:2px;background:var(--stroke);overflow:hidden;vertical-align:middle;margin-left:6px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.bar.hot>i{background:var(--err-fg)}
+
+/* ---------- 徽章 ---------- */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11.5px;border:1px solid;white-space:nowrap}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.b-ok{background:var(--ok-bg);border-color:var(--ok-bd);color:var(--ok-fg)}
+.b-stop{background:var(--stop-bg);border-color:var(--stop-bd);color:var(--stop-fg)}
+.b-busy{background:var(--busy-bg);border-color:var(--busy-bd);color:var(--busy-fg)}
+.b-build{background:var(--build-bg);border-color:var(--build-bd);color:var(--build-fg)}
+.b-err{background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg)}
+
+/* ---------- 状态区 ---------- */
+.infobar{margin:10px 14px 0;display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:var(--r-md);border:1px solid var(--err-bd);background:var(--err-bg);color:var(--fg);font-size:12.5px}
+.infobar.info{border-color:var(--accent);background:var(--accent-soft)}
+.infobar .msg{flex:1;line-height:1.5}
+.skel{padding:0 12px}
+.skel-row{height:38px;border-bottom:1px solid var(--stroke);display:flex;align-items:center;gap:12px}
+.skel-bar{height:9px;border-radius:4px;background:linear-gradient(90deg,var(--bg-elev),var(--stroke),var(--bg-elev));background-size:200% 100%;animation:sh 1.2s linear infinite}
+@keyframes sh{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:48px 24px;text-align:center;color:var(--fg-3)}
+.empty h3{font-size:14px;font-weight:600;color:var(--fg-2)}
+.empty p{font-size:12.5px;max-width:380px;line-height:1.6}
+
+/* ---------- 指标卡 ---------- */
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px 14px}
+.metric{background:var(--bg-card);border:1px solid var(--stroke);border-radius:var(--r-lg);padding:12px 14px}
+.metric .k{font-size:11.5px;color:var(--fg-3)}
+.metric .v{font-size:22px;font-weight:600;margin-top:4px;font-variant-numeric:tabular-nums}
+.metric .d{font-size:11.5px;color:var(--fg-3);margin-top:2px}
+
+/* ---------- 详情面板 ---------- */
+.detail{background:var(--bg-elev);border-left:1px solid var(--stroke);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.d-head{padding:14px;border-bottom:1px solid var(--stroke)}
+.d-kicker{font-size:11px;color:var(--fg-3);text-transform:none}
+.d-title{font-size:15px;font-weight:600;margin-top:3px;word-break:break-all;line-height:1.35}
+.d-badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.d-body{padding:6px 14px 14px;overflow:auto;flex:1}
+.d-section{margin-top:14px}
+.d-section h4{font-size:11.5px;color:var(--fg-3);font-weight:600;margin-bottom:6px;letter-spacing:.02em}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:12.5px;border-bottom:1px solid var(--stroke)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--fg-3);flex:0 0 auto}
+.kv .v{text-align:right;word-break:break-all;color:var(--fg-2)}
+.d-foot{padding:12px 14px;border-top:1px solid var(--stroke);display:flex;flex-direction:column;gap:6px}
+.d-foot .row{display:flex;gap:6px}
+.d-foot .row .btn{flex:1;justify-content:center}
+
+/* ---------- 日志抽屉 ---------- */
+.drawer{border-top:1px solid var(--stroke);background:var(--bg-card);flex:0 0 auto;height:36px;display:flex;align-items:center;gap:10px;padding:0 14px;cursor:pointer}
+.drawer .caret{transition:transform .15s;color:var(--fg-3)}
+body[data-log="open"] .drawer .caret{transform:rotate(90deg)}
+.drawer .t{font-size:12.5px;font-weight:600}
+.drawer .hint{font-size:11.5px;color:var(--fg-3)}
+.logpane{height:0;overflow:hidden;background:#161616;border-top:1px solid var(--stroke);transition:height .18s ease}
+body[data-log="open"] .logpane{height:230px}
+.logpane pre{font-family:var(--mono);font-size:12px;line-height:1.65;color:#d6d6d6;padding:12px 14px;overflow:auto;height:100%;white-space:pre-wrap}
+.logpane .lvl-err{color:#ff9aa2}.logpane .lvl-warn{color:#f0c674}.logpane .lvl-ok{color:#8ddcae}.logpane .ts{color:#6f6f6f}
+
+/* ---------- 状态栏 ---------- */
+.statusbar{height:28px;display:flex;align-items:center;gap:14px;padding:0 14px;border-top:1px solid var(--stroke);font-size:11.5px;color:var(--fg-3);flex:0 0 auto}
+.statusbar .ok-dot{width:6px;height:6px;border-radius:50%;background:var(--ok-fg)}
+
+/* ---------- 对话框 ---------- */
+.scrim{position:absolute;inset:0;background:#0009;display:none;align-items:center;justify-content:center;z-index:20}
+.scrim.show{display:flex}
+.dialog{background:var(--bg-card);border:1px solid var(--stroke-strong);border-radius:var(--r-xl);width:420px;box-shadow:0 32px 64px #000a;overflow:hidden}
+.dialog .d-body{padding:20px}
+.dialog h3{font-size:15px;font-weight:600;margin-bottom:8px}
+.dialog p{font-size:13px;color:var(--fg-2);line-height:1.6}
+.dialog .d-foot{flex-direction:row;justify-content:flex-end;gap:8px;padding:14px 20px;background:var(--bg-elev);border-top:1px solid var(--stroke)}
+.dialog .d-foot .btn{min-width:96px;justify-content:center}
+
+/* ---------- 构建页 ---------- */
+.build-wrap{flex:1;display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0}
+.form{display:flex;gap:8px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--stroke);flex-wrap:wrap}
+.field{display:flex;align-items:center;gap:6px;background:var(--bg-card);border:1px solid var(--stroke-strong);border-radius:var(--r-md);padding:5px 10px}
+.field label{font-size:11.5px;color:var(--fg-3);white-space:nowrap}
+.field input{border:0;background:transparent;outline:0;color:var(--fg);font-family:inherit;font-size:12.5px;width:260px}
+.term{flex:1;overflow:auto;background:#161616;padding:12px 14px;font-family:var(--mono);font-size:12px;line-height:1.7;color:#d6d6d6;white-space:pre-wrap;min-height:0}
+.term .step{color:#4cc2ff}.term .ok{color:#8ddcae}.term .warn{color:#f0c674}.term .dim{color:#6f6f6f}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body data-nav="expanded" data-detail="shown" data-log="closed" data-theme="dark">
+<div class="shell">
+
+  <!-- 标题栏 -->
+  <div class="titlebar">
+    <div class="brand"><span class="dot"></span>wslcUI <span class="sub">WSL 容器管理</span></div>
+    <div class="tb-spacer"></div>
+    <div class="demo">
+      <span>演示状态</span>
+      <button class="chip on" data-demo="normal">正常</button>
+      <button class="chip" data-demo="loading">加载</button>
+      <button class="chip" data-demo="empty">空</button>
+      <button class="chip" data-demo="error">错误</button>
+    </div>
+    <button class="chip" id="themeBtn">亮色主题</button>
+  </div>
+
+  <!-- 三栏主体 -->
+  <div class="body">
+    <nav class="nav" id="nav">
+      <div class="nav-item active" data-page="containers"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M5 7h6M5 9.5h3"/></svg><span class="label">容器</span><span class="count" id="c-containers">0</span></div>
+      <div class="nav-item" data-page="images"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2 10.5l3.5-3 2.5 2.5L10.5 7l3.5 3.5"/></svg><span class="label">镜像</span><span class="count" id="c-images">0</span></div>
+      <div class="nav-item" data-page="networks"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="8" cy="4" r="2"/><circle cx="3.5" cy="12" r="2"/><circle cx="12.5" cy="12" r="2"/><path d="M8 6v2M8 8H4.6M8 8h3.4"/></svg><span class="label">网络</span><span class="count" id="c-networks">0</span></div>
+      <div class="nav-item" data-page="volumes"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4"/></svg><span class="label">卷</span><span class="count" id="c-volumes">0</span></div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" data-page="stats"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2.5 13V8M6.5 13V3M10.5 13V6.5M14 13v-3"/></svg><span class="label">统计</span></div>
+      <div class="nav-item" data-page="build"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M9.5 2.5l4 4M2 12.5l1.5-4 6-6 4 4-6 6z"/></svg><span class="label">构建</span></div>
+      <div class="nav-foot">wslc 2.9.9<br>SDK + CLI bridge</div>
+    </nav>
+
+    <main class="main" id="main">
+      <div class="cmdbar" id="cmdbar"></div>
+      <div class="scroll" id="content"></div>
+    </main>
+
+    <aside class="detail" id="detail"></aside>
+  </div>
+
+  <!-- 日志抽屉 -->
+  <div class="drawer" id="drawer">
+    <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3l5 5-5 5"/></svg>
+    <span class="t">日志</span>
+    <span class="hint" id="drawerHint">点击展开 · 选中对象后按 L 载入</span>
+    <div class="spacer"></div>
+    <span class="hint" id="drawerTarget">未选择对象</span>
+  </div>
+  <div class="logpane"><pre id="logText"></pre></div>
+
+  <!-- 状态栏 -->
+  <div class="statusbar">
+    <span class="ok-dot"></span><span id="sbStatus">就绪</span>
+    <span class="spacer"></span>
+    <span id="sbCount">—</span>
+    <span>wslc 2.9.9</span>
+  </div>
+
+  <!-- 对话框 -->
+  <div class="scrim" id="scrim">
+    <div class="dialog" role="dialog" aria-modal="true">
+      <div class="d-body"><h3 id="dlgTitle">确认</h3><p id="dlgMsg"></p></div>
+      <div class="d-foot"><button class="btn" id="dlgCancel">取消</button><button class="btn primary" id="dlgOk">确认</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============ 数据 ============ */
+const DATA = {
+  containers: [
+    {id:"c1", name:"nginx-proxy", image:"nginx:1.27-alpine", status:"running", ports:"80→8080, 443→8443", created:"2 小时前", cpu:12, mem:"218 MB / 2 GB", memPct:11, net:"1.4 MB / 860 KB", pids:4, network:"bridge", volume:"nginx-conf"},
+    {id:"c2", name:"postgres-main", image:"postgres:16", status:"running", ports:"5432→5432", created:"1 天前", cpu:27, mem:"1.2 GB / 4 GB", memPct:31, net:"86 MB / 240 MB", pids:18, network:"app-net", volume:"pgdata"},
+    {id:"c3", name:"redis-cache", image:"redis:7-alpine", status:"stopped", ports:"6379→6379", created:"3 天前", cpu:0, mem:"0 / 1 GB", memPct:0, net:"—", pids:0, network:"bridge", volume:"—"},
+    {id:"c4", name:"api-gateway", image:"local/api:0.8.2", status:"running", ports:"3000→3000", created:"5 小时前", cpu:64, mem:"742 MB / 2 GB", memPct:37, net:"320 MB / 180 MB", pids:12, network:"app-net", volume:"—"},
+    {id:"c5", name:"build-runner", image:"local/buildkit:latest", status:"stopped", ports:"—", created:"6 天前", cpu:0, mem:"0 / 8 GB", memPct:0, net:"—", pids:0, network:"none", volume:"build-cache"},
+    {id:"c6", name:"vector-db", image:"qdrant/qdrant:v1.12", status:"error", ports:"6333→6333", created:"11 小时前", cpu:3, mem:"96 MB / 2 GB", memPct:5, net:"12 KB / 8 KB", pids:2, network:"app-net", volume:"qdrant-storage"}
+  ],
+  images: [
+    {id:"i1", repo:"nginx", tag:"1.27-alpine", size:"48.2 MB", created:"2 小时前", digest:"sha256:9f2a…c81d", containers:1},
+    {id:"i2", repo:"postgres", tag:"16", size:"418 MB", created:"1 天前", digest:"sha256:3ab7…19fe", containers:1},
+    {id:"i3", repo:"redis", tag:"7-alpine", size:"41.6 MB", created:"3 天前", digest:"sha256:c4d9…7b02", containers:1},
+    {id:"i4", repo:"local/api", tag:"0.8.2", size:"212 MB", created:"5 小时前", digest:"sha256:71e0…aa33", containers:1},
+    {id:"i5", repo:"local/buildkit", tag:"latest", size:"184 MB", created:"6 天前", digest:"sha256:e5c1…0d47", containers:1},
+    {id:"i6", repo:"qdrant/qdrant", tag:"v1.12", size:"126 MB", created:"11 小时前", digest:"sha256:b2f8…5ac9", containers:1},
+    {id:"i7", repo:"alpine", tag:"latest", size:"7.8 MB", created:"2 周前", digest:"sha256:1e42…bb90", containers:0}
+  ],
+  networks: [
+    {id:"n1", name:"bridge", driver:"nat", scope:"local", subnet:"172.17.0.0/16", attached:2},
+    {id:"n2", name:"app-net", driver:"nat", scope:"local", subnet:"172.18.0.0/16", attached:3},
+    {id:"n3", name:"host", driver:"host", scope:"local", subnet:"—", attached:0},
+    {id:"n4", name:"none", driver:"null", scope:"local", subnet:"—", attached:1}
+  ],
+  volumes: [
+    {id:"v1", name:"pgdata", driver:"local", mount:"/var/lib/postgresql/data", size:"2.4 GB", usedBy:"postgres-main"},
+    {id:"v2", name:"nginx-conf", driver:"local", mount:"/etc/nginx/conf.d", size:"48 KB", usedBy:"nginx-proxy"},
+    {id:"v3", name:"qdrant-storage", driver:"local", mount:"/qdrant/storage", size:"640 MB", usedBy:"vector-db"},
+    {id:"v4", name:"build-cache", driver:"local", mount:"/var/cache/buildkit", size:"3.1 GB", usedBy:"build-runner"}
+  ],
+  stats: [
+    {id:"s1", name:"nginx-proxy", cpu:12, mem:"218 MB / 2 GB", memPct:11, net:"1.4 MB / 860 KB", block:"22 MB / 4 MB", pids:4},
+    {id:"s2", name:"postgres-main", cpu:27, mem:"1.2 GB / 4 GB", memPct:31, net:"86 MB / 240 MB", block:"1.8 GB / 940 MB", pids:18},
+    {id:"s3", name:"api-gateway", cpu:64, mem:"742 MB / 2 GB", memPct:37, net:"320 MB / 180 MB", block:"410 MB / 210 MB", pids:12},
+    {id:"s4", name:"vector-db", cpu:3, mem:"96 MB / 2 GB", memPct:5, net:"12 KB / 8 KB", block:"64 MB / 12 MB", pids:2}
+  ]
+};
+
+const LOG_SAMPLES = {
+  "nginx-proxy":
+`[2026-08-28 12:04:11] <span class="ts">nginx: [notice]</span> using the "epoll" event method
+[2026-08-28 12:04:11] <span class="ts">nginx: [notice]</span> nginx/1.27.4
+[2026-08-28 12:04:11] <span class="ts">nginx: [notice]</span> OS: Linux 5.15.167.4-microsoft-standard-WSL2
+[2026-08-28 12:04:12] <span class="lvl-ok">[ok]</span> start worker processes
+[2026-08-28 12:31:47] 172.18.0.4 - - "GET /api/health HTTP/1.1" 200 18
+[2026-08-28 12:31:48] <span class="lvl-warn">[warn]</span> upstream server temporarily unavailable
+[2026-08-28 12:31:49] 172.18.0.4 - - "GET /api/health HTTP/1.1" 200 18
+[2026-08-28 13:02:03] <span class="lvl-err">[error]</span> connect() failed (111: Connection refused) while connecting to upstream`,
+  "vector-db":
+`[2026-08-28 09:12:02] <span class="lvl-ok">[INFO]</span> qdrant starting, version 1.12.1
+[2026-08-28 09:12:04] <span class="lvl-ok">[INFO]</span> loaded collection: memdoc_chunks
+[2026-08-28 13:41:55] <span class="lvl-err">[ERROR]</span> failed to write segment: no space left on device
+[2026-08-28 13:41:55] <span class="lvl-err">[ERROR]</span> storage panic: IoError(Os { code: 28 })
+[2026-08-28 13:41:56] <span class="lvl-warn">[WARN]</span> process exited with code 137 (SIGKILL)`
+};
+
+const BUILD_LOG =
+`<span class="step">[1/6] FROM docker.io/library/alpine:3.20</span>
+<span class="dim">      → 已缓存</span>
+<span class="step">[2/6] RUN apk add --no-cache build-base cmake git</span>
+<span class="dim">      fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main</span>
+<span class="ok">      ✓ 完成 (38.2s)</span>
+<span class="step">[3/6] WORKDIR /src</span>
+<span class="step">[4/6] COPY . .</span>
+<span class="dim">      142 个文件 · 4.8 MB</span>
+<span class="step">[5/6] RUN cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j16</span>
+<span class="warn">      ⚠ 3 个弃用警告</span>
+<span class="ok">      ✓ 完成 (2m 14s)</span>
+<span class="step">[6/6] LABEL org.opencontainers.image.version=1.4.0</span>
+<span class="ok">✓ 构建成功 → local/api:1.4.0 (236 MB, 用时 3m 07s)</span>`;
+
+/* ============ 页面定义 ============ */
+const PAGES = {
+  containers: {
+    title:"容器", icon:"容器",
+    cols:[{k:"name",t:"名称",w:"1.3fr"},{k:"image",t:"镜像",w:"1.6fr"},{k:"status",t:"状态",w:"112px"},{k:"ports",t:"端口",w:"1.2fr"},{k:"cpu",t:"CPU",w:"110px"},{k:"created",t:"创建",w:"100px"},{k:"_act",t:"",w:"104px"}],
+    placeholder:"搜索容器名称或镜像…",
+    primary:{label:"运行容器", act:"run"},
+    actions:[{label:"启动",act:"start"},{label:"停止",act:"stop"},{label:"日志",act:"logs"},{label:"终端",act:"term"}],
+    empty:{t:"还没有容器",d:"从「镜像」页选择一个镜像运行，或先拉取一个公共镜像。",cta:"去拉取镜像",go:"images"}
+  },
+  images: {
+    title:"镜像", icon:"镜像",
+    cols:[{k:"repo",t:"仓库",w:"1.4fr"},{k:"tag",t:"标签",w:"100px"},{k:"size",t:"大小",w:"110px"},{k:"containers",t:"在用",w:"80px"},{k:"created",t:"拉取时间",w:"120px"},{k:"_act",t:"",w:"104px"}],
+    placeholder:"搜索仓库或标签…",
+    primary:{label:"拉取镜像", act:"pull"},
+    actions:[{label:"运行",act:"run"},{label:"删除",act:"del",danger:true}],
+    empty:{t:"本地还没有镜像",d:"输入镜像引用开始拉取，例如 alpine:latest。",cta:"拉取 alpine:latest",act:"fill-pull"}
+  },
+  networks: {
+    title:"网络", icon:"网络",
+    cols:[{k:"name",t:"名称",w:"1.4fr"},{k:"driver",t:"驱动",w:"110px"},{k:"scope",t:"作用域",w:"100px"},{k:"subnet",t:"子网",w:"1.2fr"},{k:"attached",t:"接入容器",w:"100px"},{k:"_act",t:"",w:"104px"}],
+    placeholder:"搜索网络…",
+    primary:{label:"新建网络", act:"create"},
+    actions:[{label:"删除",act:"del",danger:true}],
+    empty:{t:"暂无自定义网络",d:"创建一个网络，让多个容器通过名称互相访问。",cta:"新建网络",act:"create"}
+  },
+  volumes: {
+    title:"卷", icon:"卷",
+    cols:[{k:"name",t:"名称",w:"1.3fr"},{k:"driver",t:"驱动",w:"90px"},{k:"size",t:"占用",w:"100px"},{k:"mount",t:"挂载点",w:"1.5fr"},{k:"usedBy",t:"使用者",w:"1.1fr"},{k:"_act",t:"",w:"104px"}],
+    placeholder:"搜索卷…",
+    primary:{label:"新建卷", act:"create"},
+    actions:[{label:"删除",act:"del",danger:true}],
+    empty:{t:"暂无数据卷",d:"卷用于持久化容器数据，删除容器后依然保留。",cta:"新建卷",act:"create"}
+  },
+  stats: {
+    title:"统计", icon:"统计",
+    cols:[{k:"name",t:"容器",w:"1.4fr"},{k:"cpu",t:"CPU %",w:"130px"},{k:"mem",t:"内存 / 限制",w:"150px"},{k:"memPct",t:"内存 %",w:"130px"},{k:"net",t:"网络 I/O",w:"1.3fr"},{k:"block",t:"块 I/O",w:"1.3fr"},{k:"pids",t:"PID",w:"70px"}],
+    placeholder:"搜索容器…",
+    primary:{label:"刷新快照", act:"refresh-stats"},
+    actions:[],
+    empty:{t:"暂无资源统计",d:"wslc 的 stats 是一次性快照，点击刷新采集当前用量。",cta:"刷新快照",act:"refresh-stats"}
+  },
+  build: { title:"构建", icon:"构建", special:true }
+};
+
+const STATUS = {
+  running:{cls:"b-ok", label:"运行中"},
+  stopped:{cls:"b-stop", label:"已停止"},
+  error:{cls:"b-err", label:"异常退出"},
+  pulling:{cls:"b-busy", label:"拉取中"},
+  building:{cls:"b-build", label:"构建中"}
+};
+
+/* ============ 状态 ============ */
+const state = {
+  page:"containers",
+  query:"",
+  sort:{containers:["name",1], images:["repo",1], networks:["name",1], volumes:["name",1], stats:["cpu",-1]},
+  sel:{containers:null, images:null, networks:null, volumes:null, stats:null},
+  view:"normal",
+  logOpen:false,
+  logTarget:"nginx-proxy",
+  pullRef:"alpine:latest"
+};
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num = v => { const m = parseFloat(String(v).replace(/[^\d.]/g,"")); return isNaN(m) ? 0 : m; };
+
+function rowsFor(page){
+  if(page === "build") return [];
+  const list = DATA[page] || [];
+  const q = state.query.trim().toLowerCase();
+  let rows = list.filter(r => !q || Object.values(r).some(v => String(v).toLowerCase().includes(q)));
+  const [key, dir] = state.sort[page] || ["name", 1];
+  rows = rows.slice().sort((a,b) => {
+    const av = a[key], bv = b[key];
+    if(av === undefined) return 0;
+    if(typeof av === "number" || (av !== "" && !isNaN(num(av)) && /[\d.]/.test(String(av))) && key !== "name" && key !== "repo"){
+      return (num(av) - num(bv)) * dir;
+    }
+    return String(av).localeCompare(String(bv), "zh-CN") * dir;
+  });
+  return rows;
+}
+
+/* ============ 渲染 ============ */
+function render(){
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.page === state.page));
+  ["containers","images","networks","volumes"].forEach(k => { const el = $("#c-"+k); if(el) el.textContent = DATA[k].length; });
+  renderCmdbar();
+  renderContent();
+  renderDetail();
+  renderStatusbar();
+}
+
+function renderCmdbar(){
+  const p = PAGES[state.page];
+  if(p.special){
+    $("#cmdbar").innerHTML = `
+      <span class="page-title">${esc(p.title)}</span>
+      <span class="meta">从 Dockerfile 构建本地镜像</span>
+      <div class="spacer"></div>
+      <button class="btn" data-act="browse">浏览上下文</button>
+      <button class="btn primary" data-act="build">开始构建</button>`;
+    return;
+  }
+  const rows = rowsFor(state.page);
+  $("#cmdbar").innerHTML = `
+    <span class="page-title">${esc(p.title)}</span>
+    <div class="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--fg-3)" stroke-width="1.4"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+      <input id="q" placeholder="${esc(p.placeholder)}" value="${esc(state.query)}" />
+    </div>
+    ${p.actions.map(a => `<button class="btn sm${a.danger ? " danger" : ""}" data-act="${a.act}" ${state.sel[state.page] ? "" : "disabled"}>${esc(a.label)}</button>`).join("")}
+    <div class="spacer"></div>
+    <span class="meta">${rows.length} 项</span>
+    <button class="btn" data-act="refresh">刷新</button>
+    <button class="btn primary" data-act="${p.primary.act}">${esc(p.primary.label)}</button>`;
+}
+
+function renderContent(){
+  const host = $("#content");
+  if(state.page === "build"){ renderBuild(host); return; }
+  if(state.view === "loading"){ renderSkeleton(host); return; }
+  if(state.view === "error"){ renderError(host); return; }
+  const rows = rowsFor(state.page);
+  if(!rows.length){ renderEmpty(host); return; }
+  renderTable(host, rows);
+}
+
+function renderTable(host, rows){
+  const p = PAGES[state.page];
+  const [sk, sd] = state.sort[state.page] || ["name",1];
+  const grid = p.cols.map(c => c.w).join(" ");
+  const head = p.cols.map(c => c.k === "_act"
+    ? `<th style="cursor:default"></th>`
+    : `<th data-sort="${c.k}" class="${c.k === sk ? "sorted" : ""}" style="width:${c.w}">${esc(c.t)}<span class="arrow">${c.k === sk ? (sd > 0 ? "▲" : "▼") : "▲"}</span></th>`).join("");
+  const body = rows.map(r => {
+    const tds = p.cols.map(c => {
+      const v = r[c.k];
+      if(c.k === "_act"){
+        const acts = state.page === "containers"
+          ? [{l:"日志",a:"logs"},{l:"终端",a:"term"}]
+          : [{l:"删除",a:"del"}];
+        return `<td><div class="row-actions">${acts.map(a => `<button class="btn sm ghost" data-act="${a.a}" data-id="${r.id}">${a.l}</button>`).join("")}</div></td>`;
+      }
+      if(c.k === "status"){
+        const s = STATUS[v] || STATUS.stopped;
+        return `<td><span class="badge ${s.cls}"><span class="dot"></span>${s.label}</span></td>`;
+      }
+      if(c.k === "cpu"){
+        const n = num(v);
+        return `<td><span class="mono">${n.toFixed(0)}%</span><span class="bar${n > 50 ? " hot" : ""}"><i style="width:${Math.min(100,n)}%"></i></span></td>`;
+      }
+      if(c.k === "memPct"){
+        const n = num(v);
+        return `<td><span class="mono">${n.toFixed(0)}%</span><span class="bar${n > 80 ? " hot" : ""}"><i style="width:${Math.min(100,n)}%"></i></span></td>`;
+      }
+      if(c.k === "name" || c.k === "repo"){
+        return `<td class="strong">${esc(v)}</td>`;
+      }
+      if(c.k === "tag" || c.k === "digest" || c.k === "mount" || c.k === "subnet" || c.k === "ports"){
+        return `<td class="mono dim">${esc(v)}</td>`;
+      }
+      if(c.k === "size" || c.k === "mem" || c.k === "net" || c.k === "block" || c.k === "pids" || c.k === "attached" || c.k === "containers"){
+        return `<td class="mono">${esc(v)}</td>`;
+      }
+      return `<td class="dim">${esc(v)}</td>`;
+    }).join("");
+    const sel = state.sel[state.page] === r.id ? " sel" : "";
+    return `<tr class="${sel.trim()}" data-id="${r.id}">${tds}</tr>`;
+  }).join("");
+  host.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderSkeleton(host){
+  const p = PAGES[state.page];
+  const grid = (p.cols || [{w:"1fr"},{w:"1.4fr"},{w:"120px"},{w:"1fr"},{w:"100px"}]).map(c => c.w).join(" ");
+  const widths = ["70%","88%","52%","64%","46%","76%","60%"];
+  const row = i => `<div class="skel-row" style="display:grid;grid-template-columns:${grid};gap:12px;align-items:center">
+    ${(p.cols || []).map((c,j) => `<div class="skel-bar" style="width:${widths[(i+j) % widths.length]}"></div>`).join("")}
+  </div>`;
+  host.innerHTML = `<div class="skel">${[0,1,2,3,4,5].map(row).join("")}</div>`;
+}
+
+function renderEmpty(host){
+  const p = PAGES[state.page];
+  const e = p.empty || {t:"暂无数据", d:""};
+  host.innerHTML = `<div class="empty">
+    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="var(--fg-3)" stroke-width="1.2">
+      <rect x="6" y="12" width="28" height="20" rx="3"/><path d="M6 20h28M14 26h6"/></svg>
+    <h3>${esc(e.t)}</h3><p>${esc(e.d)}</p>
+    <button class="btn primary" data-act="${e.act || "refresh"}" ${e.go ? `data-go="${e.go}"` : ""}>${esc(e.cta || "刷新")}</button>
+  </div>`;
+}
+
+function renderError(host){
+  host.innerHTML = `<div class="infobar" style="margin:14px">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--err-fg)" stroke-width="1.4"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v4M8 11h.01"/></svg>
+      <div class="msg"><strong>无法连接 wslc 后端。</strong><br>命令 <span class="mono">wslc list -a</span> 退出码 1：WSL 组件未就绪，或该发行版未运行。请确认 WSL 2 已启用后重试。</div>
+    </div>
+    <div class="empty" style="padding-top:8px">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="var(--fg-3)" stroke-width="1.2"><circle cx="20" cy="20" r="15"/><path d="M14 20l6 6 6-12"/></svg>
+      <h3>后端不可用</h3><p>错误信息已上屏。修复后点击重试，界面会自动恢复列表。</p>
+      <button class="btn primary" data-act="refresh">重试</button>
+    </div>`;
+}
+
+function renderBuild(host){
+  host.innerHTML = `<div class="build-wrap">
+    <div class="form">
+      <div class="field"><label>上下文</label><input id="ctx" value="D:\\src\\ironforge" /></div>
+      <button class="btn" data-act="browse">浏览…</button>
+      <div class="field"><label>标签</label><input id="tag" value="local/api:1.4.0" /></div>
+      <div class="spacer"></div>
+      <span class="badge b-build"><span class="dot"></span>上次构建 3m 07s</span>
+      <button class="btn" data-act="clear-log">清空</button>
+      <button class="btn primary" data-act="build">开始构建</button>
+    </div>
+    <div class="term">${BUILD_LOG}</div>
+  </div>`;
+}
+
+/* ============ 详情面板 ============ */
+function renderDetail(){
+  const host = $("#detail");
+  if(state.page === "build"){
+    host.innerHTML = detailShell("构建", "镜像构建", "", `<div class="d-section"><h4>说明</h4>
+      <p style="font-size:12.5px;color:var(--fg-2);line-height:1.7">从 Dockerfile 构建镜像，等价于 <span class="mono">wslc build -t &lt;tag&gt; &lt;context&gt;</span>。构建期间输出实时追加到下方终端，可随时中断。</p></div>
+      <div class="d-section"><h4>最近标签</h4>
+        ${["local/api:1.4.0","local/api:1.3.2","local/buildkit:latest"].map(t => `<div class="kv"><span class="k mono">${esc(t)}</span><span class="v"><button class="btn sm ghost" data-act="fill-tag" data-tag="${esc(t)}">填入</button></span></div>`).join("")}
+      </div>`, [`<button class="btn" data-act="browse">选择目录</button>`]);
+    return;
+  }
+
+  const id = state.sel[state.page];
+  const row = (DATA[state.page] || []).find(r => r.id === id);
+  const P = PAGES[state.page];
+
+  if(!row){
+    host.innerHTML = `<div class="d-head"><div class="d-kicker">详情</div><div class="d-title" style="color:var(--fg-3);font-weight:400">未选择对象</div></div>
+      <div class="d-body"><div class="d-section"><p style="font-size:12.5px;color:var(--fg-3);line-height:1.7">在左侧列表中选择一个${esc(P.title)}以查看属性与可执行操作。双击列表行可直接打开终端。</p></div></div>
+      <div class="d-foot"><div class="row"><button class="btn" data-act="refresh">刷新列表</button></div></div>`;
+    return;
+  }
+
+  let body = "", badges = "", foot = [];
+
+  if(state.page === "containers"){
+    const s = STATUS[row.status];
+    badges = `<span class="badge ${s.cls}"><span class="dot"></span>${s.label}</span>`;
+    body = `
+      <div class="d-section"><h4>运行信息</h4>
+        ${kv("镜像", row.image, true)}${kv("端口映射", row.ports, true)}${kv("网络", row.network)}${kv("数据卷", row.volume)}${kv("创建于", row.created)}${kv("PID 数", row.pids)}
+      </div>
+      <div class="d-section"><h4>资源占用</h4>
+        ${kv("CPU", `<span class="mono">${row.cpu}%</span>`)}
+        ${kv("内存", `<span class="mono">${row.mem}</span> <span class="dim">(${row.memPct}%)</span>`)}
+        ${kv("网络 I/O", `<span class="mono">${row.net}</span>`)}
+      </div>`;
+    foot = [
+      `<div class="row"><button class="btn" data-act="${row.status === "running" ? "stop" : "start"}">${row.status === "running" ? "停止" : "启动"}</button><button class="btn" data-act="restart">重启</button></div>`,
+      `<div class="row"><button class="btn" data-act="logs">查看日志</button><button class="btn" data-act="term">打开终端</button></div>`,
+      `<div class="row"><button class="btn danger" data-act="del">删除容器</button></div>`
+    ];
+  }
+  if(state.page === "images"){
+    badges = `<span class="badge b-ok"><span class="dot"></span>本地可用</span>`;
+    body = `<div class="d-section"><h4>镜像</h4>
+        ${kv("仓库", row.repo)}${kv("标签", row.tag, true)}${kv("大小", row.size, true)}${kv("摘要", row.digest, true)}${kv("拉取时间", row.created)}${kv("在用容器", row.containers)}
+      </div>`;
+    foot = [`<div class="row"><button class="btn primary" data-act="run">运行容器</button></div>`,
+            `<div class="row"><button class="btn" data-act="inspect">查看层信息</button></div>`,
+            `<div class="row"><button class="btn danger" data-act="del">删除镜像</button></div>`];
+  }
+  if(state.page === "networks"){
+    badges = row.name === "bridge" ? `<span class="badge b-busy"><span class="dot"></span>默认</span>` : `<span class="badge b-stop"><span class="dot"></span>自定义</span>`;
+    body = `<div class="d-section"><h4>网络</h4>
+        ${kv("驱动", row.driver)}${kv("作用域", row.scope)}${kv("子网", row.subnet, true)}${kv("接入容器", row.attached)}
+      </div>`;
+    foot = [`<div class="row"><button class="btn" data-act="inspect">查看接入容器</button></div>`,
+            `<div class="row"><button class="btn danger" data-act="del" ${row.attached > 0 ? "disabled" : ""}>删除网络</button></div>`];
+  }
+  if(state.page === "volumes"){
+    badges = `<span class="badge b-stop"><span class="dot"></span>${esc(row.driver)}</span>`;
+    body = `<div class="d-section"><h4>卷</h4>
+        ${kv("驱动", row.driver)}${kv("挂载点", row.mount, true)}${kv("占用", row.size, true)}${kv("使用者", row.usedBy)}
+      </div>`;
+    foot = [`<div class="row"><button class="btn" data-act="browse">在资源管理器中打开</button></div>`,
+            `<div class="row"><button class="btn danger" data-act="del" ${row.usedBy !== "—" ? "disabled" : ""}>删除卷</button></div>`];
+  }
+  if(state.page === "stats"){
+    const hot = row.cpu > 50;
+    badges = `<span class="badge ${hot ? "b-err" : "b-ok"}"><span class="dot"></span>${hot ? "高负载" : "正常"}</span>`;
+    body = `<div class="d-section"><h4>资源快照</h4>
+        ${kv("CPU", `<span class="mono">${row.cpu}%</span>`)}${kv("内存", `<span class="mono">${row.mem}</span> <span class="dim">(${row.memPct}%)</span>`)}
+        ${kv("网络 I/O", `<span class="mono">${row.net}</span>`)}${kv("块 I/O", `<span class="mono">${row.block}</span>`)}${kv("PID 数", row.pids)}
+      </div>
+      <div class="d-section"><p style="font-size:11.5px;color:var(--fg-3);line-height:1.6">wslc stats 为一次性快照，不会自动刷新。建议每 5 秒手动刷新或开启轮询。</p></div>`;
+    foot = [`<div class="row"><button class="btn primary" data-act="refresh-stats">刷新快照</button></div>`,
+            `<div class="row"><button class="btn" data-act="logs">查看日志</button></div>`];
+  }
+
+  host.innerHTML = detailShell(P.title, row.name || row.repo, badges, body, foot);
+  $("#drawerTarget").textContent = row.name || `${row.repo}:${row.tag}`;
+}
+
+function detailShell(kicker, title, badges, body, foot){
+  return `<div class="d-head">
+      <div class="d-kicker">${esc(kicker)} · 详情</div>
+      <div class="d-title">${esc(title)}</div>
+      <div class="d-badges">${badges}</div>
+    </div>
+    <div class="d-body">${body}</div>
+    <div class="d-foot">${foot.join("")}</div>`;
+}
+function kv(k, v, mono){
+  return `<div class="kv"><span class="k">${esc(k)}</span><span class="v${mono ? " mono" : ""}">${v}</span></div>`;
+}
+
+function renderStatusbar(){
+  const n = state.page === "build" ? "构建就绪" : `${rowsFor(state.page).length} 个${PAGES[state.page].title}`;
+  const txt = state.view === "loading" ? "正在同步…" : state.view === "error" ? "后端不可用" : "就绪";
+  $("#sbStatus").textContent = txt;
+  $("#sbCount").textContent = n;
+}
+
+/* ============ 交互 ============ */
+document.addEventListener("click", e => {
+  const nav = e.target.closest(".nav-item");
+  if(nav){
+    state.page = nav.dataset.page;
+    state.query = "";
+    render();
+    return;
+  }
+  const th = e.target.closest("th[data-sort]");
+  if(th){
+    const k = th.dataset.sort;
+    const cur = state.sort[state.page];
+    state.sort[state.page] = cur && cur[0] === k ? [k, -cur[1]] : [k, 1];
+    renderContent();
+    return;
+  }
+  const tr = e.target.closest("tbody tr[data-id]");
+  if(tr && !e.target.closest("button")){
+    state.sel[state.page] = tr.dataset.id;
+    const row = DATA[state.page].find(r => r.id === tr.dataset.id);
+    if(row) state.logTarget = row.name || `${row.repo}:${row.tag}`;
+    renderContent();
+    renderDetail();
+    renderStatusbar();
+    return;
+  }
+  const btn = e.target.closest("[data-act]");
+  if(btn) handleAct(btn.dataset.act, btn);
+});
+
+document.addEventListener("dblclick", e => {
+  const tr = e.target.closest("tbody tr[data-id]");
+  if(tr && state.page === "containers") handleAct("term");
+});
+
+document.addEventListener("input", e => {
+  if(e.target.id === "q"){ state.query = e.target.value; renderContent(); renderStatusbar(); }
+});
+
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape"){ $("#scrim").classList.remove("show"); return; }
+  if(e.target.tagName === "INPUT") return;
+  if(e.key === "/"){ const q = $("#q"); if(q){ e.preventDefault(); q.focus(); } }
+  if(e.key.toLowerCase() === "l"){ toggleLog(true); }
+  if(e.key.toLowerCase() === "r" && !e.metaKey && !e.ctrlKey){ runRefresh(); }
+});
+
+function handleAct(act, el){
+  const P = PAGES[state.page];
+  const id = state.sel[state.page];
+  const row = (DATA[state.page] || []).find(r => r.id === id);
+
+  switch(act){
+    case "refresh": runRefresh(); break;
+    case "refresh-stats": runRefresh("资源快照已更新"); break;
+    case "logs": {
+      if(row) state.logTarget = row.name || `${row.repo}:${row.tag}`;
+      toggleLog(true);
+      break;
+    }
+    case "term": toast("已为 " + (row ? row.name : "选中容器") + " 打开 ConPTY 终端窗口"); break;
+    case "start": if(row){ row.status = "running"; render(); toast(`${row.name} 已启动`); } break;
+    case "stop": if(row){ row.status = "stopped"; render(); toast(`${row.name} 已停止`); } break;
+    case "restart": toast(`正在重启 ${row ? row.name : "容器"}…`); break;
+    case "run": toast(`正在从 ${row ? row.repo + ":" + row.tag : "镜像"} 创建容器`); break;
+    case "inspect": toast("层信息面板将在实现阶段补齐"); break;
+    case "browse": toast("已打开文件夹选择对话框"); break;
+    case "clear-log": toast("输出已清空"); break;
+    case "build": toast("构建任务已提交，输出实时追加"); break;
+    case "create":
+      promptDlg("新建" + P.title, `为新的${P.title}输入一个名称。名称只能包含小写字母、数字与连字符。`, "my-" + (state.page === "volumes" ? "volume" : "network"), v => toast(`已创建 ${v}`));
+      break;
+    case "fill-pull":
+      state.page = "images"; state.query = ""; state.view = "normal";
+      render(); toast(`已填入镜像引用 ${state.pullRef}`);
+      break;
+    case "fill-tag": {
+      const t = $("#tag"); if(t) t.value = el.dataset.tag; toast("标签已填入");
+      break;
+    }
+    case "del": {
+      if(!row) break;
+      const name = row.name || `${row.repo}:${row.tag}`;
+      confirmDlg(`删除${P.title}`, `确定删除「${name}」吗？此操作不可撤销，相关数据将一并移除。`, () => {
+        DATA[state.page] = DATA[state.page].filter(r => r.id !== id);
+        state.sel[state.page] = null;
+        render();
+        toast(`${name} 已删除`);
+      });
+      break;
+    }
+    default: toast(`动作：${act}`);
+  }
+}
+
+function runRefresh(msg){
+  state.view = "loading";
+  renderContent(); renderStatusbar();
+  setTimeout(() => { state.view = "normal"; render(); toast(msg || "列表已刷新"); }, 900);
+}
+
+function toggleLog(force){
+  state.logOpen = force === true ? true : !state.logOpen;
+  document.body.dataset.log = state.logOpen ? "open" : "closed";
+  if(state.logOpen){
+    const t = state.logTarget || "nginx-proxy";
+    $("#logText").innerHTML = LOG_SAMPLES[t] ||
+      `[2026-08-28 14:02:11] <span class="ts">wslc logs ${esc(t)}</span>\n<span class="lvl-ok">[ok]</span> 已附加到容器输出流（快照模式，非跟随）。\n<span class="dim">提示：wslc logs 不支持 -f 跟随，需要实时输出请打开终端。</span>`;
+    $("#drawerHint").textContent = "按 L 收起 · 双击行打开终端";
+  } else {
+    $("#drawerHint").textContent = "点击展开 · 选中对象后按 L 载入";
+  }
+}
+
+$("#drawer").addEventListener("click", () => toggleLog());
+
+document.querySelectorAll("[data-demo]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-demo]").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  state.view = b.dataset.demo === "normal" ? "normal" : b.dataset.demo;
+  renderContent();
+  renderStatusbar();
+}));
+
+$("#themeBtn").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme !== "light";
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+  $("#themeBtn").textContent = dark ? "深色主题" : "亮色主题";
+});
+
+/* 对话框 + toast */
+let dlgCb = null;
+function openDlg(title, msg, okLabel, danger, cb){
+  $("#dlgTitle").textContent = title;
+  $("#dlgMsg").innerHTML = msg;
+  const ok = $("#dlgOk");
+  ok.textContent = okLabel;
+  ok.className = "btn " + (danger ? "danger" : "primary");
+  dlgCb = cb;
+  $("#scrim").classList.add("show");
+  ok.focus();
+}
+function confirmDlg(t, m, cb){ openDlg(t, esc(m), "删除", true, cb); }
+function promptDlg(t, m, def, cb){
+  openDlg(t, esc(m) + `<div style="margin-top:10px"><input id="dlgInput" value="${esc(def)}" style="width:100%;padding:6px 10px;border-radius:6px;border:1px solid var(--stroke-strong);background:var(--bg-elev);color:var(--fg);font-family:inherit;font-size:13px;outline:0" /></div>`, "创建", false, () => {
+    const v = ($("#dlgInput") || {}).value || def; cb(v);
+  });
+}
+$("#dlgCancel").addEventListener("click", () => $("#scrim").classList.remove("show"));
+$("#scrim").addEventListener("click", e => { if(e.target.id === "scrim") $("#scrim").classList.remove("show"); });
+$("#dlgOk").addEventListener("click", () => { $("#scrim").classList.remove("show"); if(dlgCb){ const c = dlgCb; dlgCb = null; c(); } });
+
+let toastTimer = null;
+function toast(msg){
+  const sb = $("#sbStatus");
+  sb.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => renderStatusbar(), 2200);
+}
+
+render();
+</script>
+</body>
+</html>

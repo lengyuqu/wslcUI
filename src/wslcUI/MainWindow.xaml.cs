@@ -1,6 +1,10 @@
+using System.ComponentModel;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using WinRT.Interop;
+using wslcUI.Models;
+using wslcUI.Services;
 using wslcUI.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -20,6 +24,65 @@ public sealed partial class MainWindow : Window
         this.AppWindow.Resize(new Windows.Graphics.SizeInt32(1100, 860));
         // Auto-load data once the window is activated (Window has no Loaded event).
         this.Activated += MainWindow_Activated;
+
+        // 恢复上次保存的主题（用户偏好），无保存值时保持 VM 默认 = ElementTheme.Default
+        var saved = UserSettings.LoadTheme();
+        if (saved is not null)
+        {
+            // ApplicationTheme(Light=0,Dark=1) 与 ElementTheme(Default=0,Light=1,Dark=2)
+            // 枚举值不一致，不能直接强转；按语义映射。
+            ViewModel.Theme = saved.Value == ApplicationTheme.Dark
+                ? ElementTheme.Dark
+                : ElementTheme.Light;
+        }
+
+        // 主题跟随 VM：用户在顶栏点「主题」翻转 VM.Theme，RootRequestedTheme 同步生效。
+        // Grid.RequestedTheme 是 FrameworkElement 上的合法属性（WinUI 3）。
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        Root.RequestedTheme = ViewModel.Theme;
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.Theme))
+        {
+            Root.RequestedTheme = ViewModel.Theme;
+            // ElementTheme.Default 含义是「跟系统」，无对应 ApplicationTheme 值，不持久化。
+            if (ViewModel.Theme == ElementTheme.Default) return;
+            // ElementTheme(Default=0,Light=1,Dark=2) 与 ApplicationTheme(Light=0,Dark=1)
+            // 枚举值不一致，不能强转（强转会把 Light 存成 Dark、Dark 存成非法值 2）；
+            // 按语义映射。走到这里只可能是 Light/Dark。
+            UserSettings.SaveTheme(ViewModel.Theme == ElementTheme.Light
+                ? ApplicationTheme.Light
+                : ApplicationTheme.Dark);
+        }
+        else if (e.PropertyName == nameof(MainViewModel.CurrentPage))
+        {
+            // 页面也可由非导航入口切换（如容器空态的「去拉取镜像」按钮），
+            // 此时 NavigationView 高亮要跟上，否则侧栏停留在旧页。
+            SyncNavSelection();
+        }
+    }
+
+    /// <summary>把 VM.CurrentPage 反向同步到 NavigationView 选中项。</summary>
+    private void SyncNavSelection()
+    {
+        var tag = ViewModel.CurrentPage.ToString();
+        if (NavView.SelectedItem is NavigationViewItem current &&
+            string.Equals(current.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+            return; // 已是目标项，避免无谓的 SelectionChanged 回环
+
+        foreach (var mi in NavView.MenuItems)
+        {
+            if (mi is NavigationViewItem nvi &&
+                string.Equals(nvi.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                // 触发 SelectionChanged → NavigateCommand，但 CurrentPage 已是同一值，
+                // VM 的 setter 不重复通知，无死循环。
+                NavView.SelectedItem = nvi;
+                return;
+            }
+        }
     }
 
     private async void MainWindow_Activated(object sender, WindowActivatedEventArgs e)
@@ -28,10 +91,36 @@ public sealed partial class MainWindow : Window
         await ViewModel.RefreshCommand.ExecuteAsync(null);
     }
 
-    private void OpenTerminalButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>打开终端。详情面板和容器列表的「终端」按钮共享同一个入口。</summary>
+    private void OpenTerminal_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;
         var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
         term.Activate();
+    }
+
+    /// <summary>
+    /// 容器行双击：直接打开终端（与 docker desktop 一致）。
+    /// SelectedItem 已通过 TwoWay 绑定自动同步，无需从 sender 二次取数据。
+    /// </summary>
+    private void ContainersList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (ViewModel.SelectedContainer is null) return;
+        var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
+        term.Activate();
+    }
+
+    /// <summary>
+    /// 把 NavigationView 的选中项映射成 VM.CurrentPage。
+    /// 用 Tag("Containers" / "Images" / ...) → ViewModel.NavigateCommand 解析。
+    /// 不要直接写 VM.CurrentPage —— 走命令保留 OnCurrentPageChanged 的副作用（清搜索、刷新过滤）。
+    /// </summary>
+    private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItem is not NavigationViewItem item) return;
+        var tag = item.Tag as string;
+        if (string.IsNullOrEmpty(tag)) return;
+        if (System.Enum.TryParse<ResourcePage>(tag, ignoreCase: true, out _))
+            ViewModel.NavigateCommand.Execute(tag);
     }
 }

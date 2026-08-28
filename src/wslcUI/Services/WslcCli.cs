@@ -361,6 +361,10 @@ internal static class WslcCli
         if (imgIdx < 0) imgIdx = FindColumn(boundaries, headerLine, "IMAGE");
         var statusIdx = FindColumn(boundaries, headerLine, "状态");
         if (statusIdx < 0) statusIdx = FindColumn(boundaries, headerLine, "STATUS");
+        var portsIdx = FindColumn(boundaries, headerLine, "端口");
+        if (portsIdx < 0) portsIdx = FindColumn(boundaries, headerLine, "PORTS");
+        var createdIdx = FindColumn(boundaries, headerLine, "已创建");
+        if (createdIdx < 0) createdIdx = FindColumn(boundaries, headerLine, "CREATED");
         if (idIdx < 0 || nameIdx < 0 || imgIdx < 0)
             return result; // unrecognised header
 
@@ -379,6 +383,9 @@ internal static class WslcCli
                 Name = cells[nameIdx],
                 Image = cells[imgIdx],
                 Status = statusIdx >= 0 && cells.Count > statusIdx ? cells[statusIdx] : "",
+                // 列缺失或单元格为空时统一降级为「—」，不用空字符串冒充有值。
+                Ports = (portsIdx >= 0 && cells.Count > portsIdx && cells[portsIdx].Length > 0) ? cells[portsIdx] : "—",
+                CreatedAt = (createdIdx >= 0 && cells.Count > createdIdx && cells[createdIdx].Length > 0) ? cells[createdIdx] : "—",
             });
         }
         return result;

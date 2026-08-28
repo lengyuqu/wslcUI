@@ -59,11 +59,11 @@ wslcUI/
 └── src/wslcUI/
     ├── wslcUI.csproj
     ├── App.xaml(.cs)            # DI 容器 + 启动
-    ├── MainWindow.xaml(.cs)     # 主窗口 (Pivot: 容器/镜像/网络/卷/统计/构建 + 终端按钮 + x:Bind)
+    ├── MainWindow.xaml(.cs)     # 主窗口：NavigationView 三栏（侧栏 220 + 内容 + 详情面板 340 + 日志抽屉 + 状态栏；6 page：容器/镜像/网络/卷/统计/构建，x:Bind）
     ├── TerminalWindow.xaml(.cs)  # 交互式终端 (ConPTY 真 TTY, wslc exec -it)
     ├── Program.cs                # WinUI 3 入口
     ├── app.manifest
-    ├── Models/                  # ContainerInfo / ImageInfo / NetworkInfo / VolumeInfo / StatInfo
+    ├── Models/                  # ContainerInfo (+Ports/CreatedAt/stats/StatusKind) / ImageInfo (+Digest/Reference) / NetworkInfo / VolumeInfo / StatInfo
     ├── Services/
     │   ├── IWslcClient.cs        # 后端抽象 (适配器接口)
     │   ├── WslcSdkClient.cs     # 真实 wslc SDK 实现

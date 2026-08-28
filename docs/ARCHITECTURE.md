@@ -34,8 +34,10 @@ SDK 对象模型(Microsoft.WSL.Containers):
 ```
 ┌─────────────────────────────────────────────┐
 │ 视图层  WinUI 3 (Fluent)                    │  XAML + x:Bind
-│   - MainWindow: 容器/镜像/网络/卷/统计/构建 Pivot、│
-│     工具栏、日志面板、状态栏、终端窗口          │
+│   - MainWindow: NavigationView 三栏          │
+│     (侧栏 220 + 内容 + 详情面板 340          │
+│     + 日志抽屉 + 状态栏)                     │
+│     6 page：容器/镜像/网络/卷/统计/构建       │
 ├─────────────────────────────────────────────┤
 │ ViewModel  MVVM (CommunityToolkit.Mvvm)      │  ObservableObject / RelayCommand
 │   - MainViewModel: 状态、命令、集合绑定        │

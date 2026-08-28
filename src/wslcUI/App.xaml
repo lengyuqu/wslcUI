@@ -9,6 +9,80 @@
             <ResourceDictionary.MergedDictionaries>
                 <controls:XamlControlsResources />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- 状态语义色。仅用于状态徽章，不用于装饰。
+                 深色 / 亮色两套，切换 RequestedTheme 时随 ThemeResource 自动生效。 -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="StatusRunningBg" Color="#173528" />
+                    <SolidColorBrush x:Key="StatusRunningBd" Color="#2F6B48" />
+                    <SolidColorBrush x:Key="StatusRunningFg" Color="#6CCB8F" />
+
+                    <SolidColorBrush x:Key="StatusStoppedBg" Color="#333333" />
+                    <SolidColorBrush x:Key="StatusStoppedBd" Color="#4D4D4D" />
+                    <SolidColorBrush x:Key="StatusStoppedFg" Color="#A6A6A6" />
+
+                    <SolidColorBrush x:Key="StatusErrorBg" Color="#40212A" />
+                    <SolidColorBrush x:Key="StatusErrorBd" Color="#8A3140" />
+                    <SolidColorBrush x:Key="StatusErrorFg" Color="#F1707D" />
+
+                    <SolidColorBrush x:Key="StatusBusyBg" Color="#123246" />
+                    <SolidColorBrush x:Key="StatusBusyBd" Color="#2C6D94" />
+                    <SolidColorBrush x:Key="StatusBusyFg" Color="#7FC7FF" />
+
+                    <SolidColorBrush x:Key="LogPaneBg" Color="#161616" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="StatusRunningBg" Color="#E7F5EC" />
+                    <SolidColorBrush x:Key="StatusRunningBd" Color="#8ED3AB" />
+                    <SolidColorBrush x:Key="StatusRunningFg" Color="#0F6E3F" />
+
+                    <SolidColorBrush x:Key="StatusStoppedBg" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="StatusStoppedBd" Color="#CFCFCF" />
+                    <SolidColorBrush x:Key="StatusStoppedFg" Color="#5A5A5A" />
+
+                    <SolidColorBrush x:Key="StatusErrorBg" Color="#FDECED" />
+                    <SolidColorBrush x:Key="StatusErrorBd" Color="#F0A4AC" />
+                    <SolidColorBrush x:Key="StatusErrorFg" Color="#A4262C" />
+
+                    <SolidColorBrush x:Key="StatusBusyBg" Color="#E6F2FB" />
+                    <SolidColorBrush x:Key="StatusBusyBd" Color="#8EC7EC" />
+                    <SolidColorBrush x:Key="StatusBusyFg" Color="#0B5C8A" />
+
+                    <SolidColorBrush x:Key="LogPaneBg" Color="#FBFBFB" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!-- 表头列排序按钮：透明无边框，hover 时显高亮。
+                 既保留普通 Button 的点击反馈（含 KeyboardAccelerator），
+                 又不抢占表头那 1px 下划线的视觉重量。 -->
+            <Style x:Key="HeaderButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="6,4" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+
+            <!-- 统计页指标卡。统一圆角、描边、内边距；卡片内放主标 + 数值两行。 -->
+            <Style x:Key="MetricCardStyle" TargetType="Border">
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="Padding" Value="14,10" />
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            </Style>
+
+            <!-- 详情面板键值行。只接管 Grid 的 margin/padding/spacing，
+                 列定义留给使用处显式声明（Auto + * 两段式）。 -->
+            <Style x:Key="KvRowStyle" TargetType="Grid">
+                <Setter Property="Margin" Value="0,2" />
+                <Setter Property="Padding" Value="0,3" />
+                <Setter Property="ColumnSpacing" Value="14" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

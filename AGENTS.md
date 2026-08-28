@@ -60,7 +60,67 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
   - `FakeWslcClient` = 没装 WSL 时的内存假数据，用于跑通整个 UI 流程。
   - 切换只改 `App.xaml.cs` 一行 DI 注册：`services.AddSingleton<IWslcClient, WslcSdkClient>();`（或 `FakeWslcClient`）。
 - 线程：`Program.Main` 装了 `DispatcherQueueSynchronizationContext`，`[RelayCommand]` 内 `await` 续体回到 UI 线程，可直接更新 `ObservableCollection`。
-- `app.manifest` 已声明 `runFullTrust`（unpackaged WinUI 3 必需）。
+
+### UI 布局（三栏）
+
+`MainWindow` 用 `NavigationView` 取代了旧版 `Pivot`：
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ 顶栏 40px：wslcUI · WSL 容器管理                  主题  详情         │ ← 全局按钮（ToggleTheme / ToggleDetail）
+├────────────────────────────────────────────────────────────────────┤
+│ InfoBar (Auto, 错误/提示)                                           │
+│ ProgressBar  (Auto, indeterminate, 非阻塞)                          │
+├──────────┬─────────────────────────────────────┬───────────────────┤
+│ NavigationView (220px)                         │ 详情面板 340px       │
+│  · 容器                                       │ (按 page 切换内容)   │
+│  · 镜像                                       │                     │
+│  · 网络                                       │                     │
+│  · 卷                                         │                     │
+│  ─ 分割                                        │                     │
+│  · 统计                                       │                     │
+│  · 构建                                       │                     │
+├──────────┴─────────────────────────────────────┴───────────────────┤
+│ 内容区：每个 page 一个 Grid（搜索 + 工具栏 + 表头 + ListView + 空态） │ ← 7 个 Grid 用 Visibility 互斥
+├────────────────────────────────────────────────────────────────────┤
+│ 日志抽屉把手 (Auto, Ctrl+L 切换)                                    │ ← FontIcon E70E/E70D 切
+│ 日志抽屉面板 (Auto, 230px) ← `Background="{ThemeResource LogPaneBg}"` │
+├────────────────────────────────────────────────────────────────────┤
+│ 状态栏 28px：Status | StatusBarSummary · wslc 2.9.9                  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**ViewModel 与 XAML 配套（6 个 page 互斥切换）**：`MainViewModel` 暴露 `ResourcePage` 枚举 + `CurrentPage` 偏属性；六个 `IsContainersPage` / `IsImagesPage` / `IsNetworksPage` / `IsVolumesPage` / `IsStatsPage` / `IsBuildPage` 派生 `bool` 由 `OnCurrentPageChanged` 同步翻转，XAML 用 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsXxxPage), Mode=OneWay}"` 互斥。`SearchText` 在切 page 时被 `OnCurrentPageChanged` 清空，避免跨页 filter 残留。
+
+### `App.xaml` 资源键
+
+| 资源 | 用途 | 备注 |
+|------|------|------|
+| `StatusRunning{Bg,Bd,Fg}` / `StatusStopped{...}` / `StatusError{...}` / `StatusBusy{...}` | 状态徽章语义色 | 走 `ResourceDictionary.ThemeDictionaries` 的 `Dark`/`Light` 字典，`RequestedTheme` 切换时自动生效 |
+| `LogPaneBg` | 日志抽屉面板底色 | 同上 |
+| `HeaderButtonStyle` | 表头排序按钮（透明无边框） | `TargetType="Button"`，点击反馈靠 WinUI 3 内置 |
+| `MetricCardStyle` | 统计页指标卡 | `TargetType="Border"`，统一圆角 6 / 描边 1 / Padding 14,10 |
+| `KvRowStyle` | 详情面板键值行 | `TargetType="Grid"`，只接管 margin / padding / spacing；**列定义必须在使用处显式声明**（`Style` 的 `Setter` 不能加 `ColumnDefinitions`） |
+
+**WinUI 3 无内置 DataGrid**：数据列表统一用 `ListView` + `DataTemplate` + 内嵌 `Grid`，**表头行和项模板必须使用同一套 `ColumnDefinition` 集合**（例如容器页 `1.3* / 1.6* / 120 / 1.2* / 110 / 104`），列才能对齐。本项目刻意不引 CommunityToolkit DataGrid 避免重包与版本耦合。
+
+### `MainWindow.xaml` 25 处 kv 行布局（关键修复记录）
+
+`<Grid Style="{StaticResource KvRowStyle}">` 内部需要 `<Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>` + 左侧 TextBlock `Grid.Column="0"` + 右侧 TextBlock（`HorizontalAlignment="Right"`）`Grid.Column="1"`。Style **不能**通过 `Setter` 给 `Grid` 注入 `ColumnDefinitions`，必须每处显式。**2026-08-28 落地时一次性 Python 注入**：25 个 Grid 全部补齐列定义 + 两列标签，跑 `dotnet build` 0 错误 0 警告。
+
+### `ViewModel.Theme` → `Root.RequestedTheme` + 持久化
+
+WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWindow` 构造时订阅 `ViewModel.PropertyChanged`，在 `Theme` 变化时同步到 `Root.RequestedTheme`，顶栏「主题」按钮生效。
+
+- **⚠️ 枚举映射坑**：`ElementTheme`（Default=0, Light=1, Dark=2）与 `ApplicationTheme`（Light=0, Dark=1）数值不一致，**禁止强转**（强转会把 Light 存成 Dark、Dark 存成非法值 2）。必须按语义映射（`MainWindow.xaml.cs` 已实现，勿回退）。
+- 持久化走 `Services/UserSettings.cs` → `%LOCALAPPDATA%\wslcUI\settings.json`（unpackaged 无包身份，不能用 `ApplicationData.Current.LocalSettings`）。App 构造期读回设 `Application.RequestedTheme`，MainWindow 再映射到 `ElementTheme`。有 15 个单元测试（`tests/wslcUI.Tests`）。
+
+### 数据刷新与绑定模式约定
+
+- `ContainerInfo` 实现 `INotifyPropertyChanged`：**刷新走就地合并**（`MainViewModel.UpdateContainersInPlace`，按 Name 复用实例 + 差量增删），**不要改回整体替换 `Containers` 集合**——那会让 `SelectedContainer` 脱离列表，触发 ListView 布局期异步清空选中的竞态。
+- 因为行不再重建，容器行模板与详情面板的所有可变字段绑定**必须 `Mode=OneWay`**（依赖 INPC）；`OneTime` 只可用于 `Name`/`Id` 这类不可变字段，或镜像/网络/卷页（模型仍是整体替换 + 行重建）。
+- `MergeStatsIntoContainers` 对不在 stats 快照里的容器会重置回 `—` + `HasStats=false`，防止显示过期数值。
+- NavigationView 选中与 `VM.CurrentPage` 双向同步：用户点击走 `NavView_SelectionChanged` → `NavigateCommand`；非导航入口切页（如空态「去拉取镜像」）由 `SyncNavSelection` 反向同步高亮。`Tag` 值必须与 `ResourcePage` 枚举名一致。
 
 ## 5. 当前进度（接手从这里看）
 
@@ -70,13 +130,14 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `GetSessionAsync` → 建 `SessionSettings` + `Session.Start()`（信号量单例保护）。
 - `PullImageAsync` → 带 `IProgress<(Status,Current,Total)>` 进度回调。
 - `RunAndCaptureAsync` → `CreateContainer` + 订阅 `Process` 的 `OutputReceived/ErrorReceived/Exited` 事件流，捕获 stdout/stderr。
-- `ListImagesAsync` → `Session.GetImages()`（纯 SDK，映射 `Name`/`Sha256`/`Size`/`CreatedTimestamp`）。
+- `ListImagesAsync` → `Session.GetImages()`（纯 SDK，映射 `Name`/`Sha256`→`Digest`/`Size`/`CreatedTimestamp`；**只有 SDK 侧镜像有完整 sha256**，CLI 侧镜像 `Digest` 留空、详情面板显示「—」，不用假数据填充）。
 - `Dispose` → 终止 Session。
 
 **容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
 
 - `ListContainersAsync`：调 `wslc list -a`，用按表头推导列宽的表格解析（`WslcCli.ParseContainerList`）。wslc 2.9.9 的中文 locale 表头 `容器 ID / 名称 / 映像 / 已创建 / 状态 / 端口` 也能正确切片。**不要用 `--format json`**——wslc 2.9.9 的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期用 JSON 优先的解析路径在真实环境会静默返回空列表。
   - 解析器已用真机 `wslc list -a` 联调，列对齐✅。若有新需求（新增列、改名）只需在 `ParseContainerList` 里加一行 `FindColumn(...)` 而不动 split。
+  - 解析出的 `ContainerInfo` 字段（`src/wslcUI/Models/ContainerInfo.cs`）：`Id` / `Name` / `Image` / `Status` / `Ports` / `CreatedAt` + 派生 `StatusKind`（Running/Stopped/Error/Unknown，按 zh-CN + English 双向归一）/`IsRunning`/`IsStopped`/`IsError`/`IsUnknownStatus`/`StatusLabel`（徽章中文文案），其中 `Ports` / `CreatedAt` 默认 `—`（CLI 无该列时降级）。stats 字段 `Cpu` / `Mem` / `MemPercent` / `NetIo` / `Pids`（默认 `—`）+ `HasStats` 由 `MainViewModel.MergeStatsIntoContainers` 按 Name 从 `wslc stats` 快照回填。
 - `StartAsync(name)` / `StopAsync(name)`：分别调 `wslc start <name>` / `wslc stop <name>`，非零退出抛 `InvalidOperationException`。
 - `DeleteContainerAsync(name)`：`wslc rm <name>`，非零退出抛异常。
 - `DeleteImageAsync(reference)`：`wslc image rm <reference>`（CLI 必然支持该子命令；首次联调仅核对退出码语义与报错文案）。
@@ -93,7 +154,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `CreateVolumeAsync(name)`：`wslc volume create <name>`，空名抛 `ArgumentException`，非零退出抛异常。
 - `RemoveVolumeAsync(name)`：`wslc volume remove <name>`，非零退出抛异常。
 - 解析器尚未在真实 wslc 上联调，首次仅核对输出**列格式**（`network ls` / `volume ls` 子命令必然存在，JSON 不可用会自动回退表格解析，无需怀疑标志）。
-- UI 已接：MainWindow 用 `Pivot` 四页（容器 / 镜像 / 网络 / 卷），网络页与卷页各含"名称输入框 + 创建 + 删除"面板，绑定 `NewNetworkName`/`NewVolumeName` 与对应命令。
+- UI 已接：MainWindow 用 `NavigationView` 三栏布局（侧栏 220px 容器/镜像/网络/卷/分隔/统计/构建 / 内容 `*` / 详情面板 340px 可关），网络页与卷页各含"名称输入框 + 创建 + 删除"面板，绑定 `NewNetworkName`/`NewVolumeName` 与对应命令。
 
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
@@ -101,13 +162,13 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - `GetStatsAsync`：`wslc stats`（wslc 默认就是一次性快照，**不接受** docker 的 `--no-stream` 标志——运行会报"选项名称未被识别"）。
   `WslcCli.RunAsync` 保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。已用真机联调，中文表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽解析 ✅。
 - `ParseStats`：表格优先，按表头推导列宽解析；列名定位而非硬编码下标，新增列只需补一个 `Idx(...)`。
-- UI 已接：MainWindow 的 `Pivot` 第五页"统计"，含"刷新统计"按钮 + 只读列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
+- UI 已接：MainWindow 的 `NavigationView` "统计" 页：搜索 + 「刷新快照」按钮（独立 `RefreshStatsCommand` 不进主刷新，避免 stats 卡顿波及主流程）+ 4 个指标卡（运行中 / 已停止或异常 / 快照数 / 镜像网络卷）+ 列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
 
 **镜像构建 build —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 2.9.9 SDK **没有** Dockerfile 构建的投影（只有运行期 `CreateContainer`）；镜像构建走 `wslc build -t <tag> <context>`（从目录里的 `Dockerfile`/`Containerfile` 构建）。
 - `BuildImageAsync(contextDir, tag, progress)`：`wslc build -t <tag> "<contextDir>"`，用 `OutputDataReceived` 逐行流式回传构建日志（非一次性读到底），非零退出抛 `InvalidOperationException`。空标签抛 `ArgumentException`；目录 / Dockerfile 缺失抛 `DirectoryNotFoundException`/`FileNotFoundException`。
-- UI 已接：MainWindow 的 `Pivot` 第六页"构建"，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
+- UI 已接：MainWindow 的 `NavigationView` "构建" 页，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
 
 **交互式终端 exec/attach —— 已实现（最重）**
 
