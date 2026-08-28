@@ -44,6 +44,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
   - `TargetPlatformMinVersion` 仍为 `10.0.19041.0`（wslc SDK 2.9.9 的投影要求编译期平台版本 ≥ 26100，但运行期下限可低）。
 - **CommunityToolkit.Mvvm 8.4.x 新增诊断 `MVVMTK0045`**：WinRT/WinUI 场景下 `[ObservableProperty]` 必须写在 **partial 属性**上（而非字段），否则 39 条警告。本仓库 `MainViewModel` 已全部改成 `public partial T Name { get; set; }` 形式（C# 13 partial properties，net10 默认开启）。新增属性请沿用该写法。
 - **WinAppSDK 2.4 `Pivot` 行为变化**：未显式 `SelectedIndex` 时不再默认选中第一项，启动会落在最后一项。**所有 `Pivot` 都必须显式写 `SelectedIndex="0"`**（即便你"以为"它在 1.6 行为下默认是 0）。本仓库 `MainWindow.xaml` 已显式声明。
+- **WinAppSDK 2.x 启动期 P0（unpackaged）**：① `Program.cs` 的 `Bootstrap.Initialize` 必须把 `majorMinor` 与 `minVersion` 同步升到目标版本（如 2.4 → `0x00020004` / `0x0002000400000000UL`），否则即便装上 2.4 runtime 也可能被 back-compat shim 拉到 1.6 跑；② `app.manifest` 必须显式声明 `<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"><application><maxversiontested Id="10.0.26100.0"/></application></compatibility>`，否则 OS 会启用旧兼容模式并触发"未为此应用启用必要功能"报错。两项**必须一起改**。
 - 首次编译若报 SDK 成员名错误，见第 5 节 TODO 清单，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/) 修正。
 
 ## 4. 架构速览
