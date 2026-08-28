@@ -39,7 +39,7 @@
         </StackPanel>
 
         <!-- Body: Pivot over the four resource types -->
-        <Pivot Grid.Row="1" x:Name="ResourcePivot">
+        <Pivot Grid.Row="1" x:Name="ResourcePivot" SelectedIndex="0">
             <!-- 容器 -->
             <PivotItem Header="容器">
                 <Grid>
