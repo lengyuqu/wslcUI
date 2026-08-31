@@ -432,7 +432,9 @@ public partial class MainViewModel : ObservableObject
             var inner = ex is System.AggregateException ae && ae.InnerException is not null
                 ? ae.InnerException
                 : ex;
-            msg = inner.Message;
+            // wslc 报错带「错误代码: XXX」机器码，先翻译成中文建议；
+            // 未命中映射（TranslateCliError 返回 null）保留原文兜底。
+            msg = WslcCli.TranslateCliError(inner.Message) ?? inner.Message;
             severity = InfoBarSeverity.Error;
             Status = "错误";
         }

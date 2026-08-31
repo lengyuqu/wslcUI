@@ -36,8 +36,9 @@
 
   <ItemGroup>
     <!-- 真机验证项目 tools/wslcUI.Verify 直接调用 internal 的 WslcCli / PseudoConsole，
-         走真实代码路径（而非逻辑副本）验证缺陷修复。 -->
+         走真实代码路径（而非逻辑副本）验证缺陷修复；单元测试项目同理测 TranslateCliError。 -->
     <InternalsVisibleTo Include="wslcUI.Verify" />
+    <InternalsVisibleTo Include="wslcUI.Tests" />
   </ItemGroup>
 
 </Project>

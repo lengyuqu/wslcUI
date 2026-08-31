@@ -246,6 +246,61 @@ internal static class WslcCli
         new($"{command} 失败 (exit {exit}): {stderr.Trim()}");
 
     // ====================================================================
+    //  错误码 → 中文建议映射
+    //
+    //  wslc 的 stderr 尾部带「错误代码: XXXX」机器码（如 WSLC_E_CONTAINER_
+    //  NOT_FOUND，真机 verify V3/V4 已观测）。直接把原文抛给 InfoBar 对普通
+    //  用户不可读，也没有「下一步该做什么」。这里按已观测错误码 + wslc 惯例
+    //  建立映射；未命中返回 null，调用方保留原文兜底。
+    // ====================================================================
+
+    private static readonly Dictionary<string, string> ErrorHints = new()
+    {
+        ["WSLC_E_CONTAINER_NOT_FOUND"] = "找不到该容器，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_IMAGE_NOT_FOUND"] = "找不到该镜像，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_NETWORK_NOT_FOUND"] = "找不到该网络，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_VOLUME_NOT_FOUND"] = "找不到该卷，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_CONTAINER_RUNNING"] = "容器正在运行。请先停止容器再执行该操作。",
+        ["WSLC_E_NETWORK_IN_USE"] = "该网络正被容器使用。请先断开使用它的容器。",
+        ["WSLC_E_VOLUME_IN_USE"] = "该卷正被容器使用。请先停止使用它的容器。",
+        ["WSLC_E_IMAGE_IN_USE"] = "该镜像正被容器引用。请先删除引用它的容器。",
+        ["E_INVALIDARG"] = "参数无效：请检查名称是否包含非法字符（空格、引号或特殊符号）。",
+        ["E_NOTFOUND"] = "未找到目标资源。刷新列表后重试。",
+    };
+
+    /// <summary>
+    /// 从 wslc 报错消息中提取「错误代码: XXX」并翻译成中文建议。
+    /// 返回「{友好建议}（{code}：{原始摘要}）」；消息不含可识别错误码时
+    /// 再按 stderr 关键词兜底（如 WSL 未安装引导），仍不命中返回 null。
+    /// 纯函数，可单测。
+    /// </summary>
+    internal static string? TranslateCliError(string message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+
+        // wslc 的错误码出现在「错误代码: CODE」或英文「error code: CODE」后。
+        var m = Regex.Match(message, @"(?:错误代码|error code)\s*[:：]\s*(\S+)", RegexOptions.IgnoreCase);
+        if (m.Success)
+        {
+            var code = m.Groups[1].Value.TrimEnd('.', '。');
+            if (ErrorHints.TryGetValue(code, out var hint))
+            {
+                var brief = message.Trim();
+                if (brief.Length > 80) brief = brief[..80] + "…";
+                return $"{hint}（{code}：{brief}）";
+            }
+        }
+
+        // 无错误码时按 stderr 关键词兜底（如 WSL 未装/未启动的引导文案）。
+        if (message.Contains("wsl --install", StringComparison.OrdinalIgnoreCase) ||
+            (message.Contains("WSL", StringComparison.Ordinal) &&
+             message.Contains("install", StringComparison.OrdinalIgnoreCase)))
+            return "WSL 未就绪：请运行 `wsl --install` 安装 WSL 组件后重试。";
+
+        return null;
+    }
+
+    // ====================================================================
     //  Table parsers
     //
     //  Every wslc list-style command emits the same shape: one header line
