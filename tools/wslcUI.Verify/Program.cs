@@ -10,12 +10,14 @@
 //   dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug
 // 可选参数：
 //   --skip-pty          跳过 ConPTY 项（V5-V7）
+//   --sdk-cancel        追加 V10：SDK RunAndCaptureAsync 取消路径探针（需网络拉 alpine）
 //   --container <名>    追加针对指定容器的非破坏性生命周期验证（V9）
 //
 // 退出码：0 = 全部通过；1 = 存在 FAIL。
 // =============================================================================
 
 using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -33,6 +35,7 @@ internal static class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
         var skipPty = args.Contains("--skip-pty");
+        var sdkCancel = args.Contains("--sdk-cancel");
         var container = ArgValue(args, "--container");
 
         Console.WriteLine("wslcUI 真机验证 — " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -52,6 +55,8 @@ internal static class Program
         V8_EscapeStripping();
         if (container is not null)
             await V9_ContainerLifecycle(container);
+        if (sdkCancel)
+            await V10_SdkCancelPath();
 
         Console.WriteLine(new string('=', 78));
         Console.WriteLine("汇总：");
@@ -392,6 +397,78 @@ internal static class Program
         catch (Exception ex)
         {
             Record($"V9 容器「{name}」", false, $"抛异常: {ex.Message}");
+        }
+    }
+
+    // ---------------- V10 SDK 取消路径（RunAndCaptureAsync 容器清理） ----------------
+    //
+    // WslcSdkClient.RunAndCaptureAsync 的取消清理（catch OCE → Stop(SIGTERM,5s)
+    // + Delete(Force)）此前只有编译期验证。本探针真机触发一次取消：
+    //   a) 经 SDK 会话拉 alpine:latest（需要网络）；
+    //   b) 预先取消的 token 调 RunAndCaptureAsync("alpine", sh -c sleep 30)；
+    //   c) 断言上抛 OperationCanceledException（Stop 若抛非预期异常会破坏清理链，
+    //      需要暴露而非吞掉）；
+    //   d) 清理断言：session 仍可 GetImages（未搞坏）、无残留 wslc 进程；
+    //   e) 收尾 DeleteImageAsync 清理 SDK 镜像。
+    // 默认跳过（拉镜像需网络），--sdk-cancel 显式开启。
+
+    private static async Task V10_SdkCancelPath()
+    {
+        const string image = "alpine:latest";
+        var client = new WslcSdkClient();
+        try
+        {
+            // 前置：镜像必须存在于 SDK 会话自己的存储命名空间（ListImages 是
+            // CLI+SDK 合并视图，CLI 侧有 alpine 不代表 SDK 会话能跑——两套
+            // 命名空间隔离，见 AGENTS.md 第 6 节）。Pull 幂等，已存在则秒回。
+            Console.WriteLine("[V10] 确保 SDK 会话有 alpine:latest（需要网络，首次较慢）…");
+            await client.PullImageAsync(image, null, Tok(300000));
+
+            var wslcBefore = Process.GetProcessesByName("wslc").Length;
+
+            var cts = new CancellationTokenSource();
+            cts.Cancel(); // 预取消：Start 后立即命中 WaitAsync(ct) 的取消路径
+            OperationCanceledException? oce = null;
+            try
+            {
+                await client.RunAndCaptureAsync(image, new[] { "sh", "-c", "sleep 30" }, cts.Token);
+            }
+            catch (OperationCanceledException ex) { oce = ex; }
+            catch (Exception ex)
+            {
+                Record("V10 SDK 取消路径", false,
+                    $"上抛了 {ex.GetType().Name} 而非 OperationCanceledException: {Truncate(ex.Message, 160)}");
+                return;
+            }
+
+            if (oce is null)
+            {
+                Record("V10 SDK 取消路径", false, "未抛任何异常——取消未生效或容器跑完了 30s");
+                return;
+            }
+
+            // 清理断言 1：session 仍可列举（取消没有把会话搞坏）
+            var imgsAfter = await client.ListImagesAsync(Tok(60000));
+
+            // 清理断言 2：没有新的 wslc 残留进程（对比取消前后）
+            await Task.Delay(2000); // 给 Stop/Delete 一点收敛时间
+            var wslcAfter = Process.GetProcessesByName("wslc").Length;
+
+            var pass = wslcAfter <= wslcBefore;
+            Record("V10 SDK 取消路径", pass,
+                $"OCE 正确上浮；取消后 session 可列举（{imgsAfter.Count} 镜像）；" +
+                $"wslc 进程 {wslcBefore} → {wslcAfter}" +
+                (pass ? "" : "（有残留，Stop/Delete 清理链可疑）"));
+        }
+        catch (Exception ex)
+        {
+            Record("V10 SDK 取消路径", false, $"前置步骤失败: {Truncate(ex.Message, 160)}");
+        }
+        finally
+        {
+            // 收尾：清理 SDK 镜像（best effort，不影响判定）
+            try { await client.DeleteImageAsync(image, Tok(60000)); } catch { /* best effort */ }
+            client.Dispose();
         }
     }
 
