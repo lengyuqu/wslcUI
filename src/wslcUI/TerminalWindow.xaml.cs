@@ -41,7 +41,8 @@ public sealed partial class TerminalWindow : Window
         try
         {
             var exe = WslcCli.ExePath;
-            var cmd = $"\"{exe}\" exec -it {container} /bin/sh";
+            // 容器名加引号：名字含空格时不会被 CreateProcessW 的命令行解析拆开。
+            var cmd = $"\"{exe}\" exec -it \"{container}\" /bin/sh";
             _pty = new PseudoConsole(cmd, 100, 30);
             _pty.OutputReceived += OnOutput;
         }
@@ -86,7 +87,9 @@ public sealed partial class TerminalWindow : Window
         if (e.Key != VirtualKey.Enter) return;
         var line = InputBox.Text;
         InputBox.Text = "";
-        _pty?.Write(Encoding.UTF8.GetBytes(line + "\n"));
+        // PTY 行规范下按 Enter 应发 \r（icrnl 会转成 \n）；直接发 \n
+        // 依赖终端默认配置，个别 shell 下不触发执行。
+        _pty?.Write(Encoding.UTF8.GetBytes(line + "\r"));
     }
 
     private void TerminalWindow_Closed(object sender, WindowEventArgs args)

@@ -507,6 +507,9 @@ public partial class MainViewModel : ObservableObject
             else
             {
                 Containers.Add(f);
+                // 同步登记进 existing：若本次快照里出现同名重复行（CLI 输出异常），
+                // 第二行会命中复用分支而不是再次 Add 造成列表重复。
+                existing[f.Name] = f;
             }
         }
 
@@ -761,16 +764,19 @@ public partial class MainViewModel : ObservableObject
     private async Task ShowLogsAsync()
     {
         if (SelectedContainer is null) return;
+        // await 前捕获：等待期间用户切换选中项会让后续 SelectedContainer.Name
+        // 指向别的容器，日志标题与内容对不上。
+        var name = SelectedContainer.Name;
         var ct = BeginOp();
         IsBusy = true;
-        Status = $"读取 {SelectedContainer.Name} 日志 …";
+        Status = $"读取 {name} 日志 …";
         try
         {
-            LogTarget = SelectedContainer.Name;
-            Logs = await _client.GetLogsAsync(SelectedContainer.Name, ct);
+            LogTarget = name;
+            Logs = await _client.GetLogsAsync(name, ct);
             // 载入后自动展开抽屉：用户点「日志」就是想看内容，不该再点一次。
             IsLogPaneOpen = true;
-            Status = $"{SelectedContainer.Name} 日志已加载";
+            Status = $"{name} 日志已加载";
             IsInfoBarOpen = false;
         }
         catch (System.Exception ex)
