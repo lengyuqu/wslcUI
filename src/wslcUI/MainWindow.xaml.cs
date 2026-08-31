@@ -95,10 +95,15 @@ public sealed partial class MainWindow : Window
         await ViewModel.RefreshCommand.ExecuteAsync(null);
     }
 
-    /// <summary>打开终端。详情面板和容器列表的「终端」按钮共享同一个入口。</summary>
+    /// <summary>
+    /// 打开终端。详情面板和容器列表的「终端」按钮共享同一个入口。
+    /// 开窗前做 ConPTY 健康预检（带 5 分钟缓存）：机器级 attach 故障时
+    /// （子进程 0xC0000142 启动即死）弹诊断而不是开一个永远黑屏的死窗口。
+    /// </summary>
     private void OpenTerminal_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;
+        if (!EnsureConPtyHealthy()) return;
         var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
         term.Activate();
     }
@@ -110,8 +115,28 @@ public sealed partial class MainWindow : Window
     private void ContainersList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;
+        if (!EnsureConPtyHealthy()) return;
         var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
         term.Activate();
+    }
+
+    /// <summary>ConPTY 健康预检兜底：不健康时弹 ContentDialog 说明原因。</summary>
+    private bool EnsureConPtyHealthy()
+    {
+        var (healthy, exitCode) = wslcUI.Terminal.PseudoConsole.ProbeHealth();
+        if (healthy) return true;
+
+        var dialog = new ContentDialog
+        {
+            Title = "终端功能暂不可用",
+            Content = $"此机器的 ConPTY 组件存在系统故障（测试子进程退出码 0x{unchecked((uint)exitCode):X8}），" +
+                      "打开的终端窗口将无法显示任何输出。\n\n" +
+                      "建议：安装 Windows 更新后重试；也可把此退出码反馈给系统管理员。",
+            CloseButtonText = "知道了",
+            XamlRoot = Content.XamlRoot,
+        };
+        _ = dialog.ShowAsync();
+        return false;
     }
 
     /// <summary>

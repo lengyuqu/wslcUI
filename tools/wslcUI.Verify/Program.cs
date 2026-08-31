@@ -478,6 +478,24 @@ internal static class PtyMinRepro
     [StructLayout(LayoutKind.Sequential)]
     private struct Coord { public short X, Y; }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo
+    {
+        public int cb;
+        public string? lpReserved, lpDesktop, lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput, hStdOutput, hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct StartupInfoEx
+    {
+        public StartupInfo StartupInfo;
+        public IntPtr lpAttributeList;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct ProcessInformationRaw
     {
@@ -488,7 +506,7 @@ internal static class PtyMinRepro
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcessW(
         string? app, string cmd, IntPtr pa, IntPtr ta, bool inh, uint flags, IntPtr env,
-        string? cwd, IntPtr si, out ProcessInformationRaw pi);
+        string? cwd, ref StartupInfoEx si, out ProcessInformationRaw pi);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern int CreatePseudoConsole(Coord size, IntPtr hInput, IntPtr hOutput, uint flags, out IntPtr phPC);
@@ -529,16 +547,17 @@ internal static class PtyMinRepro
         if (!UpdateProcThreadAttribute(list, 0, (IntPtr)0x00020016, pcPtr, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
             throw new InvalidOperationException($"UpdateProcThreadAttribute err={Marshal.GetLastWin32Error()}");
 
-        // STARTUPINFOEXW：sizeof(STARTUPINFOW)=104，+8（lpAttributeList）= 112
-        var siPtr = Marshal.AllocHGlobal(112);
-        for (var i = 0; i < 112; i += 8) Marshal.WriteInt64(siPtr, i, 0);
-        Marshal.WriteInt32(siPtr, 0, 112);
-        Marshal.WriteIntPtr(siPtr, 104, list);
+        // 与产品代码（ConPty.cs）一致的类型化 StartupInfoEx。
+        var si = new StartupInfoEx
+        {
+            StartupInfo = new StartupInfo { cb = Marshal.SizeOf<StartupInfoEx>() },
+            lpAttributeList = list,
+        };
 
         try
         {
             if (!CreateProcessW(null, "cmd.exe /c exit 0", IntPtr.Zero, IntPtr.Zero, false,
-                    0x00080000, IntPtr.Zero, null, siPtr, out var pi))
+                    0x00080000, IntPtr.Zero, null, ref si, out var pi))
                 throw new InvalidOperationException($"CreateProcessW err={Marshal.GetLastWin32Error()}");
             CloseHandle(inR); CloseHandle(outW);
             WaitForSingleObject(pi.hProcess, 5000);
@@ -549,7 +568,7 @@ internal static class PtyMinRepro
         finally
         {
             CloseHandle(outR); CloseHandle(inW);
-            Marshal.FreeHGlobal(siPtr); Marshal.FreeHGlobal(pcPtr); Marshal.FreeHGlobal(list);
+            Marshal.FreeHGlobal(pcPtr); Marshal.FreeHGlobal(list);
         }
     }
 }

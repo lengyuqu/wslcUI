@@ -104,8 +104,103 @@ internal sealed class PseudoConsole : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int WaitForSingleObject(IntPtr h, int ms);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr h, out int code);
+
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
+
+    // --------------------------------------------------------------------
+    //  ConPTY 健康预检（静态）
+    //
+    //  某些 Windows 构建（实测 Win11 26200.9278 insider）存在机器级 ConPTY
+    //  attach 故障：任何 PTY 子进程以 0xC0000142 (STATUS_DLL_INIT_FAILED)
+    //  启动即死。此时打开终端窗口只会得到一个永远黑屏的死窗口。开窗前用
+    //  最小复现（cmd /c exit 0）探测一次，故障时直接告知用户而不是开死窗。
+    //  结果缓存 5 分钟：探测本身要起一次 conhost，没必要每次开窗都付。
+    // --------------------------------------------------------------------
+
+    private static readonly object HealthGate = new();
+    private static bool _healthCached;
+    private static bool _healthValue;
+    private static int _healthExitCode;
+    private static DateTime _healthAt = DateTime.MinValue;
+    private static readonly TimeSpan HealthTtl = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// 机器 ConPTY 是否可用。探测失败（如 0xC0000142）返回 false 并附退出码。
+    /// 带缓存：故障可能是系统更新修复的，5 分钟后重探测。
+    /// </summary>
+    public static (bool Healthy, int ExitCode) ProbeHealth()
+    {
+        lock (HealthGate)
+        {
+            if (_healthCached && DateTime.UtcNow - _healthAt < HealthTtl)
+                return (_healthValue, _healthExitCode);
+
+            var size = new Coord { X = 80, Y = 25 };
+            CreatePipe(out var inR, out var inW, IntPtr.Zero, 0);
+            CreatePipe(out var outR, out var outW, IntPtr.Zero, 0);
+            var hr = CreatePseudoConsole(size, inR, outW, 0, out var hPC);
+
+            IntPtr list = IntPtr.Zero, pcPtr = IntPtr.Zero;
+            var exitCode = hr != 0 ? unchecked((int)0x80070000) : 0;
+            try
+            {
+                if (hr != 0) throw new InvalidOperationException($"CreatePseudoConsole hr=0x{hr:X8}");
+
+                IntPtr listSize = IntPtr.Zero;
+                InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref listSize);
+                list = Marshal.AllocHGlobal(listSize);
+                if (!InitializeProcThreadAttributeList(list, 1, 0, ref listSize))
+                    throw new InvalidOperationException($"InitializeProcThreadAttributeList err={Marshal.GetLastWin32Error()}");
+                pcPtr = Marshal.AllocHGlobal(IntPtr.Size);
+                Marshal.WriteIntPtr(pcPtr, hPC);
+                if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                        pcPtr, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
+                    throw new InvalidOperationException($"UpdateProcThreadAttribute err={Marshal.GetLastWin32Error()}");
+
+                // 直接复用类型化 StartupInfoEx（cb 为整个 EX 结构大小），
+                // 与实例构造路径共用同一 P/Invoke 签名。
+                var si = new StartupInfoEx
+                {
+                    StartupInfo = new StartupInfo { cb = Marshal.SizeOf<StartupInfoEx>() },
+                    lpAttributeList = list,
+                };
+
+                if (!CreateProcessW(null, "cmd.exe /c exit 0", IntPtr.Zero, IntPtr.Zero, false,
+                        EXTENDED_STARTUPINFO_PRESENT, IntPtr.Zero, null, ref si, out var pi))
+                    throw new InvalidOperationException($"CreateProcessW err={Marshal.GetLastWin32Error()}");
+                CloseHandle(inR); inR = IntPtr.Zero;
+                CloseHandle(outW); outW = IntPtr.Zero;
+                WaitForSingleObject(pi.hProcess, 5000);
+                GetExitCodeProcess(pi.hProcess, out exitCode);
+                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+            }
+            catch
+            {
+                // 探针自身失败视为不健康（exitCode 保持 hr/0 兜底）
+            }
+            finally
+            {
+                if (inR != IntPtr.Zero) CloseHandle(inR);
+                if (outW != IntPtr.Zero) CloseHandle(outW);
+                CloseHandle(outR); CloseHandle(inW);
+                if (hPC != IntPtr.Zero) ClosePseudoConsole(hPC);
+                if (list != IntPtr.Zero) { DeleteProcThreadAttributeList(list); Marshal.FreeHGlobal(list); }
+                if (pcPtr != IntPtr.Zero) Marshal.FreeHGlobal(pcPtr);
+            }
+
+            _healthValue = exitCode == 0;
+            _healthExitCode = exitCode;
+            _healthAt = DateTime.UtcNow;
+            _healthCached = true;
+            return (_healthValue, exitCode);
+        }
+    }
 
     private IntPtr _hPC = IntPtr.Zero;
     private IntPtr _hInRead, _hInWrite, _hOutRead, _hOutWrite;
