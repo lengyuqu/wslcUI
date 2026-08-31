@@ -32,6 +32,10 @@ public partial class MainViewModel : ObservableObject
     private readonly IWslcClient _client;
     private readonly IDialogService? _dialogs;
     private CancellationTokenSource? _opCts;
+    // stats 快照独立取消源：与主操作共享一个 CTS 会让「刷新快照」直接取消
+    // 进行中的主刷新（被取消方还会弹「操作已取消」错误条），违背
+    // 「stats 刷新不波及主流程」的设计意图。
+    private CancellationTokenSource? _statsCts;
 
     [ObservableProperty] public partial bool IsBusy { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "就绪";
@@ -782,7 +786,10 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task RefreshStatsAsync()
     {
-        var ct = BeginOp();
+        // 独立取消链：只取消上一次 stats 快照，不动主刷新。
+        _statsCts?.Cancel();
+        _statsCts = new CancellationTokenSource();
+        var ct = _statsCts.Token;
         IsBusy = true;
         Status = "读取资源统计…";
         try

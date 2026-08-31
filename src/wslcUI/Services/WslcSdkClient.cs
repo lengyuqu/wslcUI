@@ -167,7 +167,18 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
         container.InitProcess.Exited        += code => tcs.TrySetResult(code);
 
         container.Start();
-        await tcs.Task.WaitAsync(ct);
+        try
+        {
+            await tcs.Task.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // 取消时不能只抛异常：容器已经 Start，放着不管会在后台继续运行。
+            // Stop 后不能 Start（2.9.9 限制），但 Delete(Force) 仍可用。
+            try { container.Stop(Signal.SIGTERM, TimeSpan.FromSeconds(5)); } catch { /* best effort */ }
+            container.Delete(DeleteContainerOption.Force);
+            throw;
+        }
         container.Delete(DeleteContainerOption.Force);
         return sb.ToString();
     }

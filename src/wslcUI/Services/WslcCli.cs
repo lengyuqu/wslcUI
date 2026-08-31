@@ -51,15 +51,15 @@ internal static class WslcCli
     {
         // `-a` so stopped containers show too; `--no-trunc` would widen the ID
         // column past 12 chars. We truncate to a short ID ourselves.
-        var (exit, stdout, _) = await RunAsync(new[] { "list", "-a" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseContainerList(stdout) : new List<ContainerInfo>();
+        var (exit, stdout, stderr) = await RunAsync(new[] { "list", "-a" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseContainerList(stdout) : throw CliFailed("wslc list", exit, stderr);
     }
 
     // ---- images (CLI bridge: Session.GetImages sees only the SDK's own store) ----
     public static async Task<IReadOnlyList<ImageInfo>> ListImagesAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "images" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseImageList(stdout) : new List<ImageInfo>();
+        var (exit, stdout, stderr) = await RunAsync(new[] { "images" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseImageList(stdout) : throw CliFailed("wslc images", exit, stderr);
     }
 
     public static async Task StartAsync(string name, CancellationToken ct)
@@ -105,7 +105,6 @@ internal static class WslcCli
         var psi = new ProcessStartInfo
         {
             FileName = Exe,
-            Arguments = $"build -t \"{tag}\" \"{contextDir}\"",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -113,6 +112,12 @@ internal static class WslcCli
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
+        // ArgumentList 逐参数传递：tag / contextDir 含空格或引号时不会被
+        // Arguments 字符串拼接错误拆分（见 RunAsync 同款说明）。
+        psi.ArgumentList.Add("build");
+        psi.ArgumentList.Add("-t");
+        psi.ArgumentList.Add(tag);
+        psi.ArgumentList.Add(contextDir);
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
@@ -141,15 +146,15 @@ internal static class WslcCli
     // we deliberately skip it — see class doc. ----
     public static async Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "stats" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseStats(stdout) : new List<StatInfo>();
+        var (exit, stdout, stderr) = await RunAsync(new[] { "stats" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseStats(stdout) : throw CliFailed("wslc stats", exit, stderr);
     }
 
     // ---- networks (no SDK projection) ----
     public static async Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "network", "ls" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseNetworkList(stdout) : new List<NetworkInfo>();
+        var (exit, stdout, stderr) = await RunAsync(new[] { "network", "ls" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseNetworkList(stdout) : throw CliFailed("wslc network ls", exit, stderr);
     }
 
     public static async Task CreateNetworkAsync(string name, CancellationToken ct)
@@ -171,8 +176,8 @@ internal static class WslcCli
     // ---- volumes (no SDK projection) ----
     public static async Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct)
     {
-        var (exit, stdout, _) = await RunAsync(new[] { "volume", "ls" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseVolumeList(stdout) : new List<VolumeInfo>();
+        var (exit, stdout, stderr) = await RunAsync(new[] { "volume", "ls" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseVolumeList(stdout) : throw CliFailed("wslc volume ls", exit, stderr);
     }
 
     public static async Task CreateVolumeAsync(string name, CancellationToken ct)
@@ -200,7 +205,6 @@ internal static class WslcCli
         var psi = new ProcessStartInfo
         {
             FileName = Exe,
-            Arguments = string.Join(" ", args),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -211,6 +215,10 @@ internal static class WslcCli
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
+        // ArgumentList 逐参数传递，绕过 Arguments 字符串拼接的引号/空格
+        // 解析：含空格或引号的容器名/网络名/卷名不会被拆成多个参数，
+        // 也无法借引号给 wslc 注入额外参数。
+        foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
@@ -229,6 +237,13 @@ internal static class WslcCli
         await proc.WaitForExitAsync(ct).ConfigureAwait(false);
         return (proc.ExitCode, stdout, stderr);
     }
+
+    /// <summary>
+    /// 列举类命令失败时构造异常。此前非零退出码会静默返回空列表，用户无法区分
+    /// 「没有资源」和「查询失败」（如 WSL 未运行）——UI 显示 0 容器 0 镜像。
+    /// </summary>
+    private static InvalidOperationException CliFailed(string command, int exit, string stderr) =>
+        new($"{command} 失败 (exit {exit}): {stderr.Trim()}");
 
     // ====================================================================
     //  Table parsers

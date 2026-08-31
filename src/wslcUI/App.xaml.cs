@@ -8,7 +8,9 @@ namespace wslcUI;
 
 public partial class App : Application
 {
-    public static IServiceProvider Services { get; private set; } = null!;
+    // 声明为 ServiceProvider（而非 IServiceProvider）：关窗时 MainWindow 要
+    // 调用 Dispose 触发 WslcSdkClient.Dispose → Session.Terminate()。
+    public static ServiceProvider Services { get; private set; } = null!;
     public static DispatcherQueue DispatcherQueue { get; private set; } = null!;
     public static Window? MainWindow { get; private set; }
 

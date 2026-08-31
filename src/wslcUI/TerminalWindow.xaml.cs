@@ -25,8 +25,10 @@ public sealed partial class TerminalWindow : Window
     // enhancement; this MVP shows the text without escape noise.
     // NOTE: regular (non-verbatim) strings so \x1b is the ESC char and
     // regex backslashes are escaped as \\[ / \\].
+    // OSC 结尾同时接受 BEL(\x07) 与 ST(ESC \)：现代程序普遍用 ST，只认 BEL
+    // 会漏剥；且旧的 [^\x07]* 贪婪到下一个 BEL 会把中间正文整段吞掉。
     private static readonly Regex Ansi = new("\\x1b\\[[0-9;?]*[ -/]*[@-~]", RegexOptions.Compiled);
-    private static readonly Regex Osc = new("\\x1b\\][^\\x07]*\\x07", RegexOptions.Compiled);
+    private static readonly Regex Osc = new("\\x1b\\].*?(\\x07|\\x1b\\\\)", RegexOptions.Compiled);
 
     public TerminalWindow(string container)
     {
@@ -54,6 +56,10 @@ public sealed partial class TerminalWindow : Window
     // 逐块独立 GetString 会产生 U+FFFD 丢字。GetDecoder 缓存未完成的字节序列。
     private readonly System.Text.Decoder _utf8Decoder = Encoding.UTF8.GetDecoder();
 
+    // 终端输出上限（字符）：Text += 是 O(n) 拷贝且 TextBlock 渲染无界增长，
+    // 长会话（cat 大文件）会拖垮 UI 线程和内存。超限丢弃头部。
+    private const int MaxOutputChars = 512 * 1024;
+
     private void OnOutput(byte[] data)
     {
         var chars = new char[_utf8Decoder.GetCharCount(data, 0, data.Length, flush: false)];
@@ -62,7 +68,15 @@ public sealed partial class TerminalWindow : Window
         text = Osc.Replace(text, "");
         DispatcherQueue.TryEnqueue(() =>
         {
-            OutputText.Text += text;
+            if (OutputText.Text.Length + text.Length > MaxOutputChars)
+            {
+                var keep = Math.Max(0, MaxOutputChars - text.Length);
+                OutputText.Text = OutputText.Text[^keep..] + text;
+            }
+            else
+            {
+                OutputText.Text += text;
+            }
             OutputScroller.ChangeView(null, OutputScroller.ScrollableHeight, 1f);
         });
     }

@@ -24,6 +24,10 @@ public sealed partial class MainWindow : Window
         this.AppWindow.Resize(new Windows.Graphics.SizeInt32(1100, 860));
         // Auto-load data once the window is activated (Window has no Loaded event).
         this.Activated += MainWindow_Activated;
+        // 关窗即释放 DI 容器：WslcSdkClient.Dispose 会 Terminate SDK Session，
+        // 否则进程退出时 session storage（%LOCALAPPDATA%\wslcUI\session 下的
+        // VM / 镜像资源）不会被清理，一直残留。
+        this.Closed += (_, _) => App.Services.Dispose();
 
         // 恢复上次保存的主题（用户偏好），无保存值时保持 VM 默认 = ElementTheme.Default
         var saved = UserSettings.LoadTheme();
