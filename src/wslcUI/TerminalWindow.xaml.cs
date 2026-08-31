@@ -50,9 +50,15 @@ public sealed partial class TerminalWindow : Window
         }
     }
 
+    // 跨块有状态的 UTF-8 解码器：中文等多字节字符横跨 4KB 读取块边界时，
+    // 逐块独立 GetString 会产生 U+FFFD 丢字。GetDecoder 缓存未完成的字节序列。
+    private readonly System.Text.Decoder _utf8Decoder = Encoding.UTF8.GetDecoder();
+
     private void OnOutput(byte[] data)
     {
-        var text = Ansi.Replace(Encoding.UTF8.GetString(data), "");
+        var chars = new char[_utf8Decoder.GetCharCount(data, 0, data.Length, flush: false)];
+        _utf8Decoder.GetChars(data, 0, data.Length, chars, 0, flush: false);
+        var text = Ansi.Replace(new string(chars), "");
         text = Osc.Replace(text, "");
         DispatcherQueue.TryEnqueue(() =>
         {

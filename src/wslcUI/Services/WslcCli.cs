@@ -205,6 +205,11 @@ internal static class WslcCli
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            // 必须显式 UTF-8：GUI 进程没有控制台，.NET 默认按系统 ANSI 代码页
+            // （中文系统 = GBK）解码，中文表头会整体乱码导致 FindColumn 全部
+            // 失配、列表静默变空。wslc 重定向输出是 UTF-8。
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
 
         using var proc = Process.Start(psi)
