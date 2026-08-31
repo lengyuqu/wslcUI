@@ -340,39 +340,47 @@ internal static class Program
             (pass ? "无 U+FFFD，多字节序列跨块无损" : "检测到 U+FFFD 替换符 —— 跨块解码仍有丢字"));
     }
 
-    // ---------------- V8 转义序列剥离正则（反射 TerminalWindow 真实字段） ----------------
+    // ---------------- V8 转义序列剥离（R1 起由 VtStripper 承担） ----------------
+    //
+    // 原 Ansi/Osc 静态正则已被 VtStripper（SGR 感知解析器）取代：不再全剥，
+    // 而是保留颜色/粗细、丢弃其余。此处验证同样的「不可见噪声不残留」断言。
 
     private static void V8_EscapeStripping()
     {
-        Regex? ansi = null, osc = null;
         try
         {
-            var t = typeof(TerminalWindow);
-            ansi = t.GetField("Ansi", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Regex;
-            osc = t.GetField("Osc", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as Regex;
+            var cases = new (string Input, string ExpectedText, (byte? Fg, bool Bold)? Style, string Label)[]
+            {
+                // CSI 剥离且保留颜色：红色文字留下，转义符不残留
+                ("\x1b[31m红\x1b[0m正常", "红正常", (1, false), "SGR 保留颜色"),
+                // OSC+BEL：标题序列剥离
+                ("\x1b]0;标题\x07正文", "正文", null, "OSC+BEL 剥离"),
+                // OSC+ST：现代结尾符
+                ("\x1b]0;标题\x1b\\正文", "正文", null, "OSC+ST 剥离"),
+                // 非 SGR CSI（光标清除）丢弃，文本不丢
+                ("a\x1b[2K\rb", "a\rb", null, "非 SGR CSI 丢弃"),
+            };
+            var bad = new List<string>();
+            foreach (var c in cases)
+            {
+                var spans = new VtStripper().Feed(c.Input);
+                var text = string.Concat(spans.Select(s => s.Text));
+                if (text != c.ExpectedText) { bad.Add($"{c.Label} 期望「{c.ExpectedText}」实得「{text}」"); continue; }
+                if (c.Style is { } st)
+                {
+                    var first = spans.FirstOrDefault();
+                    if (first.Style.Foreground != st.Fg)
+                        bad.Add($"{c.Label} 颜色期望 {st.Fg} 实得 {first.Style.Foreground}");
+                }
+            }
+            Record("V8 转义剥离（VtStripper）", bad.Count == 0,
+                bad.Count == 0 ? "4/4 用例通过（SGR 保色 / OSC+BEL / OSC+ST / 非SGR丢弃）"
+                              : $"未通过: {string.Join("; ", bad)}");
         }
         catch (Exception ex)
         {
-            Record("V8 转义剥离正则", false, $"反射失败: {ex.Message}");
-            return;
+            Record("V8 转义剥离（VtStripper）", false, $"异常: {ex.Message}");
         }
-        if (ansi is null || osc is null)
-        {
-            Record("V8 转义剥离正则", false, "未能取得 TerminalWindow.Ansi / Osc 静态字段");
-            return;
-        }
-
-        var cases = new (string Input, string Expected, string Label)[]
-        {
-            (ansi.Replace("\x1b[31m红\x1b[0m", ""), "红", "CSI 剥离"),
-            (osc.Replace("\x1b]0;标题\x07正文", ""), "正文", "OSC+BEL 剥离"),
-            (osc.Replace("\x1b]0;标题\x1b\\正文", ""), "正文", "OSC+ST 剥离（faf10a5 新增支持）"),
-            (osc.Replace("前\x1b]0;t\x07中\x07后", ""), "前中\x07后", "OSC 懒惰匹配不吞正文"),
-        };
-        var bad = cases.Where(c => c.Input != c.Expected).ToList();
-        Record("V8 转义剥离正则", bad.Count == 0,
-            bad.Count == 0 ? "4/4 用例通过（CSI / OSC+BEL / OSC+ST / 懒惰匹配）"
-                          : $"未通过: {string.Join("; ", bad.Select(c => $"{c.Label} 期望「{c.Expected}」实得「{c.Input}」"))}");
     }
 
     // ---------------- V9 指定容器的非破坏性生命周期验证 ----------------

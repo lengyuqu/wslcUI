@@ -13,8 +13,10 @@
                       VerticalScrollBarVisibility="Auto"
                       BorderBrush="{ThemeResource ControlElevationBorderBrush}"
                       BorderThickness="1">
-            <TextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="13"
-                       TextWrapping="Wrap" Padding="6" />
+            <!-- R1：SGR 颜色渲染。RichTextBlock 的 Paragraph/run 由代码按
+                 VtStripper 的 StyledSpan 填充，无颜色时退化为普通文本。 -->
+            <RichTextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="13"
+                           TextWrapping="Wrap" Padding="6" />
         </ScrollViewer>
         <TextBox x:Name="InputBox" Grid.Row="1" Margin="0,6,0,0"
                  PlaceholderText="输入命令后回车发送 (exit 退出)"
