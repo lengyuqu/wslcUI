@@ -34,4 +34,10 @@
     <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.9" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 真机验证项目 tools/wslcUI.Verify 直接调用 internal 的 WslcCli / PseudoConsole，
+         走真实代码路径（而非逻辑副本）验证缺陷修复。 -->
+    <InternalsVisibleTo Include="wslcUI.Verify" />
+  </ItemGroup>
+
 </Project>
