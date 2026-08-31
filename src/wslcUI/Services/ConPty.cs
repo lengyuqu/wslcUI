@@ -110,6 +110,11 @@ internal sealed class PseudoConsole : IDisposable
     private IntPtr _hPC = IntPtr.Zero;
     private IntPtr _hInRead, _hInWrite, _hOutRead, _hOutWrite;
     private IntPtr _attrList = IntPtr.Zero;
+    // 指向「存着 _hPC 值的内存」的指针。UpdateProcThreadAttribute 的 lpValue
+    // 要求传指向属性值的指针（官方 ConptyExample 用 AllocHGlobal + WriteIntPtr
+    // 构造），直接传 _hPC 的值会把句柄值当地址读——属性列表因此是坏的，
+    // CreateProcessW 静默忽略伪控制台属性、子进程继承父控制台。
+    private IntPtr _hPcPtr = IntPtr.Zero;
     private ProcessInformation _pi;
     private Thread? _reader;
     private readonly CancellationTokenSource _cts = new();
@@ -144,9 +149,14 @@ internal sealed class PseudoConsole : IDisposable
             _attrList = Marshal.AllocHGlobal(listSize);
             if (!InitializeProcThreadAttributeList(_attrList, 1, 0, ref listSize))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList 失败");
-            UpdateProcThreadAttribute(
-                _attrList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-                _hPC, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero);
+            // lpValue 必须是指向 HPCON 值的指针（不能直接传 _hPC 的值——那会被
+            // 当作地址去读）。真机验证（tools/wslcUI.Verify V6/V7）曾抓到这个错误。
+            _hPcPtr = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(_hPcPtr, _hPC);
+            if (!UpdateProcThreadAttribute(
+                    _attrList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                    _hPcPtr, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute 失败");
 
             var si = new StartupInfoEx
             {
@@ -232,5 +242,6 @@ internal sealed class PseudoConsole : IDisposable
         if (_pi.hProcess != IntPtr.Zero) { CloseHandle(_pi.hProcess); _pi.hProcess = IntPtr.Zero; }
         if (_pi.hThread != IntPtr.Zero) { CloseHandle(_pi.hThread); _pi.hThread = IntPtr.Zero; }
         if (_attrList != IntPtr.Zero) { DeleteProcThreadAttributeList(_attrList); Marshal.FreeHGlobal(_attrList); _attrList = IntPtr.Zero; }
+        if (_hPcPtr != IntPtr.Zero) { Marshal.FreeHGlobal(_hPcPtr); _hPcPtr = IntPtr.Zero; }
     }
 }
