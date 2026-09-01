@@ -3,20 +3,21 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:wslcUI"
+    xmlns:terminal="using:wslcUI.Terminal"
     Title="终端">
     <Grid Margin="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+        <!-- R3：XTerm.NET cell 渲染（v1 行级 TextBlock；决策见 docs/TERMINAL-RENDER-DECISION.md）。
+             SizeChanged 驱动 Terminal.Resize → PseudoConsole.Resize 联动在 code-behind。 -->
         <ScrollViewer x:Name="OutputScroller" Grid.Row="0"
                       VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
                       BorderBrush="{ThemeResource ControlElevationBorderBrush}"
                       BorderThickness="1">
-            <!-- R1：SGR 颜色渲染。RichTextBlock 的 Paragraph/run 由代码按
-                 VtStripper 的 StyledSpan 填充，无颜色时退化为普通文本。 -->
-            <RichTextBlock x:Name="OutputText" FontFamily="Consolas" FontSize="13"
-                           TextWrapping="Wrap" Padding="6" />
+            <terminal:TerminalView x:Name="View" />
         </ScrollViewer>
         <TextBox x:Name="InputBox" Grid.Row="1" Margin="0,6,0,0"
                  PlaceholderText="输入命令后回车发送 (exit 退出)"

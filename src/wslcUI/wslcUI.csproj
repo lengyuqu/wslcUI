@@ -32,6 +32,10 @@
          (nuget.org publishes 2.9.3 and 2.9.9; 2.9.9 is the generation
          matching the current wslc CLI). -->
     <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.9" />
+    <!-- R3：终端核心（VT/ANSI 解析 + 屏幕 cell buffer + 输入序列生成）。
+         选型见 docs/TERMINAL-RENDER-DECISION.md（双盲 spike：4/4 真实 VT 流夹具
+         零修改渲染正确，CJK 双宽自带；MIT、headless、无 UI 依赖）。 -->
+    <PackageReference Include="XTerm.NET" Version="1.1.2" />
   </ItemGroup>
 
   <ItemGroup>
