@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- P4-R2 Spike B：XTerm.NET（tomlm/XTerm.NET，MIT，headless 终端模拟器）
+         在我们的工具链（net10）下验证编译与真实 VT 流渲染正确性。 -->
+    <PackageReference Include="XTerm.NET" Version="1.1.2" />
+  </ItemGroup>
+
+</Project>

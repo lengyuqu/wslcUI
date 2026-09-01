@@ -25,4 +25,9 @@
     <ProjectReference Include="..\..\src\wslcUI\wslcUI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- P4-R2 spike 夹具：WSL script 采集的真实 VT 流（ls/grep/vi/top） -->
+    <Content Include="TestData\**\*.vt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

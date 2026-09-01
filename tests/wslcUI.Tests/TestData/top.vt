@@ -1,0 +1,30 @@
+[H[JMem: 2859976K used, 29603460K free, 179496K shrd, 22932K buff, 940480K cached
+CPU:   0% usr   0% sys   0% nic  98% idle   0% io   0% irq   0% sirq
+Load average: 0.02 0.07 0.08 1/640 1582526
+[7m  PID  PPID USER     STAT   VSZ %VSZ CPU %CPU COMMAND[m
+  774   735 65532    S    1266m   4%  14   1% cloudflared --no-autoupdate tunnel
+   62    40 root     S    4317m  13%  14   0% /initd services
+  171    62 root     S    3065m   9%  14   0% /usr/local/bin/dockerd --config-fi
+  138    62 root     S    2651m   8%  11   0% /usr/bin/containerd --config /etc/
+  822   776 999      S    2409m   7%  10   0% mysqld
+  129    62 root     S    2117m   6%  14   0% /usr/local/bin/containerd-stargz-g
+   40    39 root     S    2097m   6%   4   0% /initd
+  941   886 root     S    1500m   4%   7   0% minio server /data --console-addre
+   10     9 root     S    1321m   4%  14   0% wsl-bootstrap run --base-image /c/
+  776    40 root     S    1302m   4%   6   0% /usr/bin/containerd-shim-runc-v2 -
+  835    40 root     S    1238m   4%  11   0% /usr/bin/containerd-shim-runc-v2 -
+  867    40 root     S    1238m   4%   3   0% /usr/bin/containerd-shim-runc-v2 -
+  886    40 root     S    1238m   4%  11   0% /usr/bin/containerd-shim-runc-v2 -
+  910    40 root     S    1238m   4%   4   0% /usr/bin/containerd-shim-runc-v2 -
+  580    40 root     S    1238m   4%   7   0% /usr/bin/containerd-shim-runc-v2 -
+  735    40 root     S    1238m   4%   5   0% /usr/bin/containerd-shim-runc-v2 -
+   12    11 root     S    1234m   4%   9   0% /usr/bin/vpnkit-bridge --pid-file=
+ 1777   953 root     S     380m   1%  15   0% {BT-Task} /www/server/panel/pyenv/
+ 1685  1668 1000     S     284m   1%   8   0% nginx: worker process
+ 1680  1668 1000     S     284m   1%   3   0% nginx: worker process
+ 1681  1668 1000     S     284m   1%   0   0% nginx: worker process
+ 1683  1668 1000     S     284m   1%   5   0% nginx: worker process
+ 1677  1668 1000     S     284m   1%   1   0% nginx: worker process
+ 1671  1668 1000     S     284m   1%  13   0% nginx: worker process
+ 1689  1668 1000     S     284m   1%  13   0% nginx: worker process
+ 1686  1668 1000     S     284m   1%   9   0% nginx: worker process
