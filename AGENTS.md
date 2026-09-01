@@ -170,18 +170,18 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 - `BuildImageAsync(contextDir, tag, progress)`：`wslc build -t <tag> "<contextDir>"`，用 `OutputDataReceived` 逐行流式回传构建日志（非一次性读到底），非零退出抛 `InvalidOperationException`。空标签抛 `ArgumentException`；目录 / Dockerfile 缺失抛 `DirectoryNotFoundException`/`FileNotFoundException`。
 - UI 已接：MainWindow 的 `NavigationView` "构建" 页，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
 
-**交互式终端 exec/attach —— 已实现（最重）**
+**交互式终端 exec/attach —— 已实现（ConPTY + XTerm.NET cell 渲染）**
 
 - 走 `wslc exec -it <name> /bin/sh`，但**不是**普通管道：用 Windows Pseudoconsole（ConPTY）P/Invoke 封装（`Services/ConPty.cs`，零外部 NuGet 依赖）给容器 shell 一个**真 TTY**，使行编辑 / 颜色 / 全屏程序正常。
-- `TerminalWindow`（`TerminalWindow.xaml(.cs)`）是独立窗口，容器页"终端"按钮打开；字节流经 `PseudoConsole.OutputReceived` 事件回传，UI 线程 `DispatcherQueue` 合入 `TextBlock`，并用正则剥掉 ANSI/OSC 转义让文本可读；输入框回车把整行 + 换行写回 PTY。
-- ⚠️ ConPTY 是 `kernel32.dll` 的 `CreatePseudoConsole`/`CreateProcessW` P/Invoke，**本会话无法编译验证**（无 .NET / WSL），属未联调代码。首次真实运行见 `ConPty.cs` 顶部 TODO 核对清单（创建是否成功 / 输入是否到达 / resize 是否生效）。完整 VT 渲染（XTermSharp / WinUI TermControl）是后续增强，当前 MVP 只显示去转义文本。
-- ✅ **P/Invoke 已对照微软官方 `microsoft/terminal` ConptyExample 做逐项自检**（2026-07-20）：修正了 2 个致命错误 —— ① `STARTUPINFOW` 缺 `dwXCountChars`/`dwYCountChars`/`dwFillAttribute` 三个 DWORD 导致结构体错位、CreateProcess 读到垃圾；② `InitializeProcThreadAttributeList` 的 `lpSize` 用了 `ref int`（4 字节），但 `SIZE_T` 是 64 位宽，64 位下尺寸被截断/越界，改为 `ref IntPtr`。另统一为「管道非继承 + `bInheritHandles=false`」的官方模式，并把 3 个 `VOID` 返回函数声明为 `void`。其余（管道方向、`PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE=0x00020016`、标志常量、`COORD` 按值传递）核对无误。
+- **渲染（R3，2026-09-01）**：`TerminalWindow` 是独立窗口（容器页"终端"按钮 / 行双击打开，经 `ProbeHealth` 预检兜底）；PTY 字节流 → UI 线程 → `XTerm.Terminal.Write`（nuget `XTerm.NET` 1.1.2，MIT，headless），`Terminal/TerminalView.cs` 订阅 `BufferChanged` 把 cell 矩阵渲染为行级 TextBlock（连续同属性合并 run，256 色/真彩色/bold/inverse/CJK 双宽）。**Resize 三级联动**：窗口 SizeChanged → `Terminal.Resize` → `PseudoConsole.Resize`。选型依据见 `docs/TERMINAL-RENDER-DECISION.md`（双盲 spike：自研原型踩中 VT100 延迟换行坑 vs XTerm.NET 4/4 真实流零修改）。R1 的 `VtStripper`+RichTextBlock 路径已退位（保留在 `Services/VtStripper.cs` 作回退种子）。
+- ⚠️ **本机（Win11 26200.9278 insider）存在机器级 ConPTY attach 故障**：任何 PTY 子进程 `0xC0000142` 启动即死（三重实验定责系统，与 wslcUI 无关）。产品侧 `PseudoConsole.ProbeHealth()`（cmd /c exit 0 探测，5 分钟缓存）在开窗前拦截并弹诊断。Windows 更新后跑 `dotnet run --project tools/wslcUI.Verify` 复验（预检行恢复 + V5-V7 PASS 即闭环）。
+- ✅ **P/Invoke 自检史**：2026-07-20 对照官方 ConptyExample 修正 STARTUPINFOW 结构错位与 `ref IntPtr`；2026-08-31 真机验证抓到致命 bug——`UpdateProcThreadAttribute` 的 `lpValue` 直接传了 `_hPC` 值（应为指向 HPCON 的指针，`AllocHGlobal`+`WriteIntPtr` 构造），此前 PTY 属性从未生效、子进程一直继承父控制台（commit `aa35cac`）。
 
 **路线图（剩余可选增强）**：
 
-- 完整 VT 终端渲染（XTermSharp / WinUI TermControl）。
+- ~~完整 VT 终端渲染~~ ✅ 已完成（R1 SGR → R2 选型 → R3 XTerm.NET cell 渲染，见 `docs/TERMINAL-RENDER-DECISION.md`）；视觉真机验收待本机 ConPTY 故障修复（见上）。
 - 镜像自动构建改为 SDK 的 `<WslcImage>` MSBuild 集成（CI 打包用，适合把 wslcUI 自身打包成镜像）。
-- 交互式终端支持 attach 到已运行进程（而非仅 `exec` 新 shell）。
+- 交互式终端支持 attach 到已运行进程（而非仅 `exec` 新 shell）；输入侧可升级为 `Terminal.GenerateKeyInput` 真键盘事件转发（替代 InputBox 整行发送）。
 
 ## 6. 关键约束与坑
 
@@ -202,4 +202,5 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停/删除 + 日志面板已接好）。
 3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。真机联调已通过：`wslc network create/remove` 退出码 0/非零语义正常，`network ls` 表头 `NETWORK ID / NAME / DRIVER / SCOPE` 与代码期望一致（按列宽解析），`volume ls` 表头 `DRIVER / VOLUME NAME` 同上。
 4. ✅ 资源监控 stats 已实现，走 `wslc stats` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。真机联调已通过：表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽正确切片。**注意**：wslc 不接受 `--no-stream`，默认就是一次性快照。
-5. ✅ 镜像构建 + 交互式终端均已实现（分别走 `wslc build -t` CLI 桥接 与 `wslc exec -it` + ConPTY 真 TTY）。下一步在真实 wslc 上联调：核对 build 流式输出、以及 ConPTY 的创建/输入/resize（见 `Services/ConPty.cs` 顶部 TODO）。
+5. ✅ 镜像构建 + 交互式终端均已实现（`wslc build -t` CLI 桥接 / `wslc exec -it` + ConPTY + XTerm.NET cell 渲染）。CLI 侧已真机验证（verify 工具 9/9，见 `tools/wslcUI.Verify`）；ConPTY 侧 lpValue bug 已修（`aa35cac`），**视觉验收卡在本机系统级 ConPTY 故障**（见第 5 节交互式终端段），待 Windows 更新后复验。
+6. 终端增强剩余项（优先级从高到低）：P1a ConPTY 复验闭环（一条命令，见 `docs/REMAINING-PLAN-2026-08-31.md`）；错误码映射表随用随补（`WslcCli.ErrorHints`）；输入侧升级 `Terminal.GenerateKeyInput`；attach 到已运行进程。
