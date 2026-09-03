@@ -36,6 +36,8 @@ public partial class MainViewModel : ObservableObject
     // 进行中的主刷新（被取消方还会弹「操作已取消」错误条），违背
     // 「stats 刷新不波及主流程」的设计意图。
     private CancellationTokenSource? _statsCts;
+    // inspect 链：独立取消源，避免选中快速切换时上一次 inspect 覆盖新选中的 mounts。
+    private CancellationTokenSource? _inspectCts;
 
     [ObservableProperty] public partial bool IsBusy { get; set; }
     [ObservableProperty] public partial string Status { get; set; } = "就绪";
@@ -180,6 +182,51 @@ public partial class MainViewModel : ObservableObject
         HasSelectedContainer = value is not null;
         LogTarget = value?.Name ?? "";
         RecomputeCanStates();
+
+        // 切换选中即取消上一次的 inspect 拉取，避免延迟返回把上一选中
+        // 的 Mounts 覆盖到新选中的实例。
+        _inspectCts?.Cancel();
+        _inspectCts?.Dispose();
+        _inspectCts = null;
+
+        if (value is null) return;
+        _inspectCts = new CancellationTokenSource();
+        // value 是引用捕获；async 续体回到 UI 线程后再按实例身份比对。
+        _ = LoadContainerMountsAsync(value, _inspectCts.Token);
+    }
+
+    /// <summary>
+    /// 拉取选中容器的 Mounts 并回填。失败时静默（inspect 是辅助数据，
+    /// 不能因它阻塞 UI 主流程），仅 Debug.WriteLine 留痕。
+    /// </summary>
+    private async Task LoadContainerMountsAsync(ContainerInfo target, CancellationToken ct)
+    {
+        try
+        {
+            var mounts = await _client.InspectContainerAsync(target.Name, ct).ConfigureAwait(true);
+            if (ct.IsCancellationRequested) return;
+
+            // 三道校验防陈旧数据回填：
+            // ① 取消（切换选中 / dispose）——直接丢；
+            // ② 选中的实例已变 ——陈旧，不写；
+            // ③ 列表里该名容器已不存在（已被删除/移除）——陈旧，不写。
+            if (!ReferenceEquals(SelectedContainer, target)) return;
+            var live = Containers.FirstOrDefault(c => c.Name == target.Name);
+            if (live is null) return;
+            live.Mounts = mounts;
+            live.MountsLoaded = true;
+        }
+        catch (OperationCanceledException) { /* 切换或 dispose，忽略 */ }
+        catch (System.Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[wslcUI] inspect {target.Name} 失败: {ex.Message}");
+            // 标记为已查（即便失败），让 UI 退出 spinner 显示空态，而不是无限转圈。
+            if (!ct.IsCancellationRequested)
+            {
+                var live = Containers.FirstOrDefault(c => c.Name == target.Name);
+                if (live is not null) live.MountsLoaded = true;
+            }
+        }
     }
     partial void OnSelectedImageChanged(ImageInfo? value)
     {

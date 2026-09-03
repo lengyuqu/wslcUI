@@ -891,6 +891,36 @@
                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                            Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedContainer.HasStats), Mode=OneWay}" />
 
+                                <TextBlock Text="挂载" FontSize="11.5" FontWeight="SemiBold" Margin="0,12,0,6"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <!-- 读取中（默认） -->
+                                <TextBlock Text="读取中…"
+                                           FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           Visibility="{x:Bind ViewModel.SelectedContainer.IsMountLoading, Mode=OneWay}" />
+                                <!-- 已查无挂载 -->
+                                <TextBlock Text="未挂载任何数据卷 / 目录。"
+                                           FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           Visibility="{x:Bind ViewModel.SelectedContainer.IsMountEmpty, Mode=OneWay}" />
+                                <!-- 有挂载：list 显示 src/rw → dest -->
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedContainer.Mounts, Mode=OneWay}"
+                                              Visibility="{x:Bind ViewModel.SelectedContainer.HasMounts, Mode=OneWay}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="models:ContainerMount">
+                                            <Grid Style="{StaticResource KvRowStyle}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="1" HorizontalAlignment="Right"
+                                                           FontFamily="Consolas" FontSize="12"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Text="{x:Bind Display, Mode=OneTime}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
                                 <StackPanel Spacing="6" Margin="0,12,0,0">
                                     <Grid ColumnSpacing="6">
                                         <Grid.ColumnDefinitions>

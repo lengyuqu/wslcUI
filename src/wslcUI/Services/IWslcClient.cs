@@ -67,4 +67,12 @@ public interface IWslcClient
 
     /// <summary>Removes a volume by name (CLI bridge: `wslc volume remove`).</summary>
     Task RemoveVolumeAsync(string name, CancellationToken ct = default);
+
+    /// <summary>
+    /// 读取容器的完整 inspect 元数据，仅取 <c>Mounts</c> 数组。
+    /// CLI bridge：<c>wslc inspect &lt;name&gt; --format json</c>。
+    /// SDK 2.9.9 无 inspect 投影，且 <c>wslc list -a</c> 不返回挂载关联——
+    /// 调用方（详情面板）选中容器时按需拉取，避免 Refresh 主路径 N+1。
+    /// </summary>
+    Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default);
 }

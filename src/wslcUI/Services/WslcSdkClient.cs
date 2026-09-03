@@ -256,6 +256,10 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task RemoveVolumeAsync(string name, CancellationToken ct = default) =>
         WslcCli.RemoveVolumeAsync(name, ct);
 
+    // ---- container inspect (CLI bridge: SDK 2.9.9 无 inspect 投影，wslc list -a 不带 Mounts) ----
+    public Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default) =>
+        WslcCli.InspectContainerAsync(name, ct);
+
     public void Dispose()
     {
         try { _session?.Terminate(); } catch { /* best effort */ }

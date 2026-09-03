@@ -198,6 +198,61 @@ internal static class WslcCli
             throw new InvalidOperationException($"wslc volume remove 失败: {stderr.Trim()}");
     }
 
+    // ---- container inspect（CLI bridge：SDK 2.9.9 无 inspect 投影）
+    // `wslc list -a` 只返回简表（ID/名称/映像/状态/端口），容器与卷/网络的
+    // 关联关系统统不在表里。Mounts 必须单独 `wslc inspect <name>` 走 JSON。
+    // 输出形态：外层是单元素数组的 JSON（wslc 2.9.9.0 实测，
+    // `Cmd / Env / HostConfig / Mounts / NetworkSettings / ...`）。
+    // 多个 Name 时返回多元素数组，下面按数组逐元素解析并合并 Mounts。
+    public static async Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("容器名称不能为空。", nameof(name));
+        var (exit, stdout, stderr) = await RunAsync(new[] { "inspect", name, "--format", "json" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseContainerInspect(stdout) : throw CliFailed("wslc inspect", exit, stderr);
+    }
+
+    internal static IReadOnlyList<ContainerMount> ParseContainerInspect(string output)
+    {
+        var result = new List<ContainerMount>();
+        if (string.IsNullOrWhiteSpace(output)) return result;
+
+        using var doc = System.Text.Json.JsonDocument.Parse(output);
+        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return result;
+
+        foreach (var c in doc.RootElement.EnumerateArray())
+        {
+            if (c.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+            if (!c.TryGetProperty("Mounts", out var mounts) ||
+                mounts.ValueKind != System.Text.Json.JsonValueKind.Array)
+                continue;
+
+            foreach (var m in mounts.EnumerateArray())
+            {
+                if (m.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
+                string S(string p) => m.TryGetProperty(p, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString() ?? "" : "";
+                var dest = S("Destination");
+                // 三种类型（volume / bind / tmpfs）至少要有 Destination；空则跳过，避免显示" → "。
+                if (dest.Length == 0) continue;
+                var rw = m.TryGetProperty("ReadWrite", out var rv) &&
+                         rv.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False
+                    ? rv.GetBoolean()
+                    : true;
+                result.Add(new ContainerMount
+                {
+                    Name = S("Name"),
+                    Destination = dest,
+                    Source = S("Source"),
+                    Type = S("Type"),
+                    ReadWrite = rw,
+                });
+            }
+        }
+        return result;
+    }
+
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
         string[] args, CancellationToken ct)
     {

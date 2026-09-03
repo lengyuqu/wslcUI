@@ -90,4 +90,23 @@ public sealed class FakeWslcClient : IWslcClient
     public Task CreateVolumeAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task RemoveVolumeAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ContainerMount>>(name switch
+        {
+            "web" => new List<ContainerMount>
+            {
+                new() { Name = "web-data", Destination = "/usr/share/nginx/html",
+                        Source = "web-data", Type = "volume", ReadWrite = true },
+            },
+            "db" => new List<ContainerMount>
+            {
+                // 双卷覆盖多挂载显示 + RO 徽章
+                new() { Name = "redis-data", Destination = "/data",
+                        Source = "redis-data", Type = "volume", ReadWrite = true },
+                new() { Name = "", Destination = "/etc/redis/conf.d",
+                        Source = "/Users/me/cfg/redis", Type = "bind", ReadWrite = false },
+            },
+            _ => Array.Empty<ContainerMount>(),
+        });
 }

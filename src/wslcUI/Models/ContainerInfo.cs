@@ -1,5 +1,6 @@
 namespace wslcUI.Models;
 
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -77,6 +78,56 @@ public class ContainerInfo : INotifyPropertyChanged
     private bool _hasStats;
     /// <summary>资源占用是否已有快照数据（无数据显示「—」，不用 0 冒充）。</summary>
     public bool HasStats { get => _hasStats; set { if (_hasStats == value) return; _hasStats = value; Raise(); } }
+
+    // ---- 挂载点（来自 `wslc inspect <name>`，按需异步回填，未查时为空）----
+
+    private IReadOnlyList<ContainerMount> _mounts = System.Array.Empty<ContainerMount>();
+
+    /// <summary>
+    /// 容器挂载列表。默认空列表；选中容器后由 MainViewModel 异步拉取并写回。
+    /// 不与 CLI 的 <c>wslc list -a</c> 同源——后者只返容器元数据，Mounts 必须
+    /// 单独 inspect，因此挂在选中触发而非 Refresh 一并拉（避免 N+1）。
+    /// </summary>
+    public IReadOnlyList<ContainerMount> Mounts
+    {
+        get => _mounts;
+        set
+        {
+            var v = value ?? System.Array.Empty<ContainerMount>();
+            if (ReferenceEquals(_mounts, v)) return;
+            _mounts = v;
+            Raise();
+            Raise(nameof(HasMounts));
+            Raise(nameof(MountCount));
+            Raise(nameof(MountSummary));
+        }
+    }
+
+    /// <summary>是否有挂载数据。挂载数为 0 也算"已查过"——与未查区分给 UI 空态文案用。</summary>
+    public bool HasMounts => _mounts.Count > 0;
+    public int MountCount => _mounts.Count;
+
+    /// <summary>状态栏摘要。空时返回空串，调用方判定 "未查" / "无挂载" 显示不同文案。</summary>
+    public string MountSummary => _mounts.Count switch
+    {
+        0 => "",
+        1 => "1 个挂载",
+        _ => $"{_mounts.Count} 个挂载",
+    };
+
+    /// <summary>是否已完成 inspect 拉取（即便结果为空列表也算"已查"），用于隐藏 loading spinner。</summary>
+    private bool _mountsLoaded;
+    public bool MountsLoaded
+    {
+        get => _mountsLoaded;
+        set { if (_mountsLoaded == value) return; _mountsLoaded = value; Raise(); }
+    }
+
+    /// <summary>已选中但 inspect 未返回（≤ 2 次 SP 间）——给 UI 显示"读取中…"。</summary>
+    public bool IsMountLoading => !_mountsLoaded;
+
+    /// <summary>已查但无挂载——给 UI 显示"未挂载…"空态文案。</summary>
+    public bool IsMountEmpty => _mountsLoaded && _mounts.Count == 0;
 
     // ---- 派生状态：供 XAML 直接绑定（WinUI 3 无 DataTrigger，靠 Visibility 切换）----
 
