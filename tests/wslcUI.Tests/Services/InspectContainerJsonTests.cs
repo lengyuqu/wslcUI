@@ -136,4 +136,31 @@ public class InspectContainerJsonTests
         Assert.Empty(WslcCli.ParseContainerInspect(""));
         Assert.Empty(WslcCli.ParseContainerInspect("   \n"));
     }
+
+    /// <summary>数组中部分对象缺 Mounts 字段（如空容器、其它类型对象混入）——跳过该对象继续处理。</summary>
+    [Fact]
+    public void ObjectsWithoutMountsProperty_AreSkipped()
+    {
+        const string json = """
+            [
+              { "Name": "x" },
+              { "Name": "y", "Mounts": [
+                  { "Destination": "/d", "Name": "v", "Source": "v", "Type": "volume", "ReadWrite": true }
+              ]}
+            ]
+            """;
+        var mounts = WslcCli.ParseContainerInspect(json);
+        Assert.Single(mounts);
+        Assert.Equal("v", mounts[0].Name);
+    }
+
+    /// <summary>Mounts 字段存在但不是数组（被破坏的数据）——跳过该容器，不抛错。</summary>
+    [Fact]
+    public void NonArrayMounts_IsTolerated()
+    {
+        const string json = """
+            [{ "Name": "x", "Mounts": "broken" }]
+            """;
+        Assert.Empty(WslcCli.ParseContainerInspect(json));
+    }
 }

@@ -25,6 +25,12 @@ public class ContainerMount
 
     public bool ReadWrite { get; set; }
 
+    /// <summary>挂载的"头部标识"——volume 取 Name，否则取 Source，最差 "∅" 单字符占位（紧凑用于列表单元格）。</summary>
+    public string Head =>
+        !string.IsNullOrEmpty(Name) ? Name :
+        !string.IsNullOrEmpty(Source) ? Source :
+        "∅";
+
     /// <summary>显示用：左边取最有意义的标识符，右边挂载点。空 destination 时只剩左半边。</summary>
     public string Display
     {
@@ -32,7 +38,7 @@ public class ContainerMount
         {
             var left = !string.IsNullOrEmpty(Name) ? Name
                      : !string.IsNullOrEmpty(Source) ? Source
-                     : "(匿名)";
+                     : "(匿名)";   // 详情面板空间宽，保留可读的全文本
             return string.IsNullOrEmpty(Destination) ? left : $"{left} → {Destination}";
         }
     }

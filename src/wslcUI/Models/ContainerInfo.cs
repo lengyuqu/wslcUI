@@ -141,15 +141,12 @@ public class ContainerInfo : INotifyPropertyChanged
         get
         {
             if (!_mountsLoaded || _mounts.Count == 0) return "—";
-            var head = FirstLabel(_mounts[0]);
+            var head = _mounts[0].Head;   // 单字符 "∅" 兜底，92px 列里不挤
             return _mounts.Count == 1 ? head : $"{head} +{_mounts.Count - 1}";
         }
     }
 
-    private static string FirstLabel(ContainerMount m) =>
-        !string.IsNullOrEmpty(m.Name) ? m.Name
-        : !string.IsNullOrEmpty(m.Source) ? m.Source
-        : "(匿名)";
+    private static string FirstLabel(ContainerMount m) => m.Head;
 
     /// <summary>
     /// 详情面板运行信息区挂载行单元格（与端口并列，"镜像 / 端口 / 卷 / 创建 / ID / 状态原文"）。

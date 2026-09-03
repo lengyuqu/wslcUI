@@ -258,26 +258,13 @@ public partial class MainViewModel : ObservableObject
     /// <summary>
     /// 选中卷变化、容器 Mounts 写入后、RefreshAsync 后、切到卷页时调用，重算 UsedBy。
     /// 提取自 OnSelectedVolumeChanged 内联段——三处触发共享同一扫描逻辑。
+    /// 核心算法抽到 <see cref="VolumeReverseMapping.Match"/> 作纯函数以便单测。
     /// </summary>
     private void RecomputeUsedBy(VolumeInfo? volume)
     {
         if (volume is null) return;
 
-        var usedBy = new List<string>();
-        var notInspected = 0;
-        foreach (var c in Containers)
-        {
-            if (!c.MountsLoaded) { notInspected++; continue; }
-            foreach (var m in c.Mounts)
-            {
-                if (!string.IsNullOrEmpty(m.Name) &&
-                    string.Equals(m.Name, volume.Name, StringComparison.Ordinal))
-                {
-                    usedBy.Add(c.Name);
-                    break;
-                }
-            }
-        }
+        var (usedBy, notInspected) = VolumeReverseMapping.Match(Containers, volume.Name);
         volume.UsedBy = usedBy;
 
         // 仅在计数变化时通知 hint，避免反复切卷导致 XAML 重复拉 binding。
