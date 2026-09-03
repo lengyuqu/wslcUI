@@ -2,8 +2,10 @@ using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
+using Windows.System;
 using XTerm;
 using XTerm.Buffer;
 
@@ -46,6 +48,91 @@ public sealed class TerminalView : Panel
 
     /// <summary>当前绑定的终端（未绑定为 null）。</summary>
     public XTerm.Terminal? Terminal => _terminal;
+
+    /// <summary>
+    /// 键盘输入产生的待发送数据（转义序列 / 可打印字符 / 粘贴文本）。
+    /// TerminalWindow 订阅后写入 PTY stdin。视图自身不接触 PTY。
+    /// </summary>
+    public event Action<string>? InputData;
+
+    public TerminalView()
+    {
+        // Panel 默认不可聚焦/不参与 hit-test：终端要接收键盘事件，
+        // IsTabStop + 透明背景（空区域可点）+ 点击聚焦三者缺一不可。
+        IsTabStop = true;
+        UseSystemFocusVisuals = false;
+        Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        Tapped += (_, _) => Focus(FocusState.Pointer);
+        Loaded += (_, _) => Focus(FocusState.Programmatic);
+        KeyDown += OnViewKeyDown;
+        CharacterReceived += OnViewCharacterReceived;
+    }
+
+    // ------------------------------------------------------------------
+    //  键盘输入（R4：真键盘转发）
+    // ------------------------------------------------------------------
+
+    private void OnViewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (InputData is null) return;
+
+        // 粘贴：Shift+Insert / Ctrl+Shift+V（终端惯例：Ctrl+V 仍发 \x16）
+        var mods = GetModifierState();
+        if (mods.HasFlag(VirtualKeyModifiers.Shift) &&
+            (e.Key == VirtualKey.Insert || (mods.HasFlag(VirtualKeyModifiers.Control) && e.Key == VirtualKey.V)))
+        {
+            _ = PasteAsync();
+            e.Handled = true;
+            return;
+        }
+
+        var data = TerminalInputMapper.KeyDown(e.Key, mods,
+            _terminal is null ? null : (k, m) => _terminal.GenerateKeyInput(k, m));
+        if (data is null) return;
+        InputData(data);
+        e.Handled = true;
+    }
+
+    private void OnViewCharacterReceived(object sender, CharacterReceivedRoutedEventArgs e)
+    {
+        if (InputData is null) return;
+        // 控制字符（<0x20、DEL）走 KeyDown 路径（已 Handled 才不会到这，
+        // 但 WinUI 某些组合仍会派发——兜底忽略，防 Ctrl+C 双发）。
+        if (e.Character < ' ' || e.Character == '\x7f') return;
+        InputData(e.Character.ToString());
+        e.Handled = true;
+    }
+
+    private async System.Threading.Tasks.Task PasteAsync()
+    {
+        try
+        {
+            var content = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (!content.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Text)) return;
+            var text = await content.GetTextAsync();
+            if (string.IsNullOrEmpty(text)) return;
+            // 终端输入行分隔用 \r（shell 的 icrnl 语义），\r\n 会导致命令双执行
+            text = text.Replace("\r\n", "\r").Replace('\n', '\r');
+            InputData?.Invoke(text);
+        }
+        catch
+        {
+            // 剪贴板读取失败（被占用/权限）：静默，不打断输入流
+        }
+    }
+
+    private static VirtualKeyModifiers GetModifierState()
+    {
+        var state = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread;
+        VirtualKeyModifiers m = VirtualKeyModifiers.None;
+        if (state(VirtualKey.Control).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            m |= VirtualKeyModifiers.Control;
+        if (state(VirtualKey.Menu).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            m |= VirtualKeyModifiers.Menu;
+        if (state(VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down))
+            m |= VirtualKeyModifiers.Shift;
+        return m;
+    }
 
     private void RebuildRowPool()
     {

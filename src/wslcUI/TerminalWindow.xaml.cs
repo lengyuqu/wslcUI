@@ -52,6 +52,21 @@ public sealed partial class TerminalWindow : Window
             });
             View.Setup(_terminal);
 
+            // 真键盘输入 → PTY stdin（R4）：TerminalView 汇聚 KeyDown/字符/
+            // 粘贴为文本段，这里统一编码为 UTF-8 写入。Terminal 侧不参与
+            // 输入回显（echo 由 PTY 对端经 OutputReceived 回流）。
+            View.InputData += data =>
+            {
+                if (_closed || _pty is null) return;
+                _pty.Write(Encoding.UTF8.GetBytes(data));
+            };
+            // 终端主动应答（如应用查询 DA/DSR，Terminal 生成响应）→ PTY
+            _terminal.DataReceived += (_, e) =>
+            {
+                if (_closed || _pty is null || string.IsNullOrEmpty(e.Data)) return;
+                _pty.Write(Encoding.UTF8.GetBytes(e.Data));
+            };
+
             // PTY 输出 → Terminal（UI 线程：Terminal 非线程安全，渲染事件也在 UI 线程）
             _pty.OutputReceived += data =>
             {
@@ -72,9 +87,16 @@ public sealed partial class TerminalWindow : Window
         catch (Exception ex)
         {
             _terminal = null;
-            // 启动失败：直接在视图下方给一行提示（TerminalView 不可用时的降级）
+            // 启动失败：InputBox 降级为错误横幅（PTY 正常时会收起它）
+            InputBox.Visibility = Visibility.Visible;
             InputBox.PlaceholderText =
                 $"无法启动终端: {ex.Message} — 请确认容器 {container} 正在运行 (wslc start {container})。";
+        }
+
+        if (_pty is not null)
+        {
+            // PTY 正常：真键盘直打，行输入框收起（失败时保留为错误横幅）
+            InputBox.Visibility = Visibility.Collapsed;
         }
     }
 

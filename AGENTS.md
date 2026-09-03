@@ -181,7 +181,7 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 
 - ~~完整 VT 终端渲染~~ ✅ 已完成（R1 SGR → R2 选型 → R3 XTerm.NET cell 渲染，见 `docs/TERMINAL-RENDER-DECISION.md`）；视觉真机验收待本机 ConPTY 故障修复（见上）。
 - 镜像自动构建改为 SDK 的 `<WslcImage>` MSBuild 集成（CI 打包用，适合把 wslcUI 自身打包成镜像）。
-- 交互式终端支持 attach 到已运行进程（而非仅 `exec` 新 shell）；输入侧可升级为 `Terminal.GenerateKeyInput` 真键盘事件转发（替代 InputBox 整行发送）。
+- ~~真键盘事件转发~~ ✅ 已完成（R4）：`TerminalInputMapper`（纯函数可单测）+ `TerminalView` 聚焦/KeyDown/CharacterReceived/粘贴（Shift+Insert、Ctrl+Shift+V）→ `InputData` 事件 → PTY stdin；InputBox 已收起（仅 PTY 启动失败时作错误横幅）。注意：WinRT 的 Alt 是 `VirtualKeyModifiers.Menu`；`Key` 枚举无字母键，Ctrl/Alt+字母由映射器自合成。剩余：attach 到已运行进程。
 
 ## 6. 关键约束与坑
 

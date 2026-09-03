@@ -79,6 +79,43 @@ if (args.Contains("--api"))
         }
         Console.WriteLine($"  GetLine(0) = \"{tw.GetLine(0)}\"");
     }
+    Console.WriteLine("--- 输入侧 API 探测（GenerateKeyInput / DataReceived） ---");
+    {
+        // ① GenerateKeyInput 返回值 + 是否同时触发 DataReceived（防双发）
+        var ti = new XTerm.Terminal();
+        var fired = new System.Collections.Generic.List<string>();
+        ti.DataReceived += (_, e) => fired.Add(e.Data);
+        foreach (var (label, key, mods) in new (string, XTerm.Input.Key, XTerm.Input.KeyModifiers)[]
+        {
+            ("Enter", XTerm.Input.Key.Enter, 0),
+            ("Backspace", XTerm.Input.Key.Backspace, 0),
+            ("UpArrow", XTerm.Input.Key.UpArrow, 0),
+            ("C-Right", XTerm.Input.Key.RightArrow, XTerm.Input.KeyModifiers.Control),
+            ("S-Tab", XTerm.Input.Key.Tab, XTerm.Input.KeyModifiers.Shift),
+            ("F1", XTerm.Input.Key.F1, 0),
+            ("Delete", XTerm.Input.Key.Delete, 0),
+            ("Home", XTerm.Input.Key.Home, 0),
+            ("PgUp", XTerm.Input.Key.PageUp, 0),
+            ("Space", XTerm.Input.Key.Space, 0),
+        })
+        {
+            var ret = ti.GenerateKeyInput(key, mods);
+            Console.WriteLine($"  {label,-10} ret={EscapeShow(ret)} fired={fired.Count}");
+            fired.Clear();
+        }
+        // ② KeyModifiers 组合（Alt 前缀行为：MetaSendsEscape 开/关对比）
+        var ret2 = ti.GenerateKeyInput(XTerm.Input.Key.Enter, XTerm.Input.KeyModifiers.Alt);
+        Console.WriteLine($"  Alt-Enter (meta=false) ret={EscapeShow(ret2)}");
+        ti.MetaSendsEscape = true;
+        var ret3 = ti.GenerateKeyInput(XTerm.Input.Key.Enter, XTerm.Input.KeyModifiers.Alt);
+        Console.WriteLine($"  Alt-Enter (meta=true)  ret={EscapeShow(ret3)}");
+        // ③ 无法表达字母键：Ctrl+C 无 Key.C → 确认枚举确无 A-Z
+        Console.WriteLine($"  Key has 'A'? {System.Enum.IsDefined(typeof(XTerm.Input.Key), "A")}");
+        // ④ Terminal 上其他 Generate*/Send* 成员
+        foreach (var m in typeof(XTerm.Terminal).GetMethods())
+            if (m.Name.Contains("Generate") || m.Name.Contains("Send") || m.Name.Contains("Input"))
+                Console.WriteLine($"  member: {m}");
+    }
     Console.WriteLine("--- Wcwidth 包 API 探测 ---");
     {
         var wc = typeof(XTerm.Terminal).Assembly.GetReferencedAssemblies()
@@ -167,3 +204,6 @@ static IEnumerable<string> Lines(Terminal t, int count)
 {
     for (var i = 0; i < count; i++) yield return t.GetLine(i);
 }
+
+static string EscapeShow(string? s) =>
+    s is null ? "null" : s.Replace("\x1b", "ESC").Replace("\r", "\\r").Replace("\n", "\\n").Replace("\x7f", "\\x7f").Replace("\t", "\\t");
