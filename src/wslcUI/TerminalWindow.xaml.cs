@@ -26,6 +26,9 @@ public sealed partial class TerminalWindow : Window
     // 等宽字符单元尺寸（一次测量缓存），用于 窗口px → 终端cols/rows 换算。
     private double _cellWidth, _cellHeight;
 
+    // 关窗标记：PTY 读线程是后台线程，窗口关闭后输出回调仍可能到达。
+    private volatile bool _closed;
+
     public TerminalWindow(string container)
     {
         this.InitializeComponent();
@@ -51,7 +54,17 @@ public sealed partial class TerminalWindow : Window
 
             // PTY 输出 → Terminal（UI 线程：Terminal 非线程安全，渲染事件也在 UI 线程）
             _pty.OutputReceived += data =>
-                DispatcherQueue.TryEnqueue(() => _terminal.Write(Encoding.UTF8.GetString(data)));
+            {
+                if (_closed) return;
+                var terminal = _terminal;
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    // 窗口关闭后仍可能有已入队的输出回调：Terminal 已 Dispose。
+                    if (_closed || terminal is null) return;
+                    try { terminal.Write(Encoding.UTF8.GetString(data)); }
+                    catch (ObjectDisposedException) { /* 关窗竞态，忽略 */ }
+                });
+            };
 
             // 窗口尺寸 → Terminal.Resize → PTY.Resize（真终端跟随窗口）
             View.SizeChanged += OnViewSizeChanged;
@@ -68,16 +81,7 @@ public sealed partial class TerminalWindow : Window
     private void OnViewSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_terminal is null || _pty is null) return;
-        if (_cellWidth <= 0 || _cellHeight <= 0)
-        {
-            // 首次布局后测量单元尺寸（用 View 首行 TextBlock 的期望尺寸近似）
-            if (View.Children.Count > 0 && View.Children[0] is TextBlock first)
-            {
-                _cellWidth = first.DesiredSize.Width / Math.Max(1, _terminal.Cols);
-                _cellHeight = first.DesiredSize.Height;
-            }
-            if (_cellWidth <= 0 || _cellHeight <= 0) return;
-        }
+        if (!EnsureCellMetrics()) return;
 
         var cols = Math.Max(20, (int)(e.NewSize.Width / _cellWidth));
         var rows = Math.Max(5, (int)(e.NewSize.Height / _cellHeight));
@@ -85,6 +89,29 @@ public sealed partial class TerminalWindow : Window
 
         _terminal.Resize(cols, rows);
         _pty.Resize(cols, rows);
+    }
+
+    /// <summary>
+    /// 测量等宽字符单元尺寸（一次，缓存）。用 10 个 'M' 的探针 TextBlock
+    /// 离屏 Measure：比「首行 TextBlock 期望宽 / Cols」可靠——首行为空或
+    /// 不满宽时旧法会得到偏小的 cell 宽，resize 换算系统性偏差。
+    /// </summary>
+    private bool EnsureCellMetrics()
+    {
+        if (_cellWidth > 0 && _cellHeight > 0) return true;
+
+        var probe = new TextBlock
+        {
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = TerminalView.FontSize,
+            Text = new string('M', 10),
+        };
+        probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        if (probe.DesiredSize.Width <= 0 || probe.DesiredSize.Height <= 0) return false;
+
+        _cellWidth = probe.DesiredSize.Width / 10;
+        _cellHeight = probe.DesiredSize.Height;
+        return true;
     }
 
     private void InputBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -98,6 +125,7 @@ public sealed partial class TerminalWindow : Window
 
     private void TerminalWindow_Closed(object sender, WindowEventArgs args)
     {
+        _closed = true;
         _pty?.Dispose();
         (_terminal as IDisposable)?.Dispose();
     }

@@ -28,7 +28,7 @@ public sealed class TerminalView : Panel
     private XTerm.Terminal? _terminal;
 
     private const string FontName = "Consolas";
-    private const double FontSize = 13.5;
+    internal const double FontSize = 13.5; // TerminalWindow 的 cell 测量探针复用同一字号
 
     /// <summary>绑定终端实例（XAML 构造无参，运行时注入）。只能调用一次。</summary>
     public void Setup(XTerm.Terminal terminal)
@@ -106,9 +106,28 @@ public sealed class TerminalView : Panel
         }
 
         var cols = Math.Min(line.Length, _terminal?.Cols ?? 80);
+        var prevWide = false; // 上一格是否为双宽字符（CJK 等）
         for (var x = 0; x < cols; x++)
         {
             var cell = line[x];
+
+            // 双宽字符在 cell 缓冲占 2 格：首格存字符，第二格 CodePoint=0、
+            // Content 为空。但空白未写格也是 CodePoint=0——用 wcwidth 判定
+            // 前格是否宽字符来区分：宽字符续格整格跳过（TextBlock 里 CJK
+            // 字形本身 ≈ 2 个拉丁格宽，补空格会多出一列导致错位）。
+            string emit;
+            if (cell.CodePoint == 0)
+            {
+                if (prevWide) continue;
+                emit = " ";
+                prevWide = false;
+            }
+            else
+            {
+                emit = cell.Content;
+                prevWide = CellWidth(cell.CodePoint) == 2;
+            }
+
             var a = cell.Attributes;
             if (a.Fg != curFg || a.Bg != curBg || a.Extended != curExt)
             {
@@ -127,10 +146,13 @@ public sealed class TerminalView : Panel
                         : default,
                 };
             }
-            pending.Append(cell.CodePoint == 0 ? ' ' : cell.Content);
+            pending.Append(emit);
         }
         Flush();
     }
+
+    // Wcwidth 是 XTerm.NET 的传递依赖（同一作者维护，与解释器的宽度判定一致）。
+    private static int CellWidth(int codePoint) => Wcwidth.UnicodeCalculator.GetWidth(codePoint);
 
     // --------------------------------------------------------------------
     //  调色板：XTerm.NET 的 Fg/Bg 是 int 编码（< 0 = 默认；0-255 = 256 色索引；

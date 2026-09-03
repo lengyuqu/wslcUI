@@ -68,6 +68,30 @@ if (args.Contains("--api"))
             foreach (var p in lineType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
                 Console.WriteLine($"    line prop: {p.PropertyType.Name} {p.Name}");
     }
+    Console.WriteLine("--- 双宽字符（CJK）cell 布局探测 ---");
+    {
+        var tw = new XTerm.Terminal();
+        tw.Write("中A文");
+        for (var x = 0; x < 5; x++)
+        {
+            var cc = tw.Buffer.Lines[0][x];
+            Console.WriteLine($"  [{x}] CodePoint=U+{(int)cc.CodePoint:X4} Content='{cc.Content}' (len={(cc.Content?.ToString() ?? "null").Length}) ext=0x{cc.Attributes.Extended:X}");
+        }
+        Console.WriteLine($"  GetLine(0) = \"{tw.GetLine(0)}\"");
+    }
+    Console.WriteLine("--- Wcwidth 包 API 探测 ---");
+    {
+        var wc = typeof(XTerm.Terminal).Assembly.GetReferencedAssemblies()
+            .FirstOrDefault(a => a.Name == "Wcwidth");
+        Console.WriteLine($"  referenced: {wc}");
+        var wcAsm = System.Reflection.Assembly.Load(wc!);
+        foreach (var t in wcAsm.GetExportedTypes())
+        {
+            Console.WriteLine($"  type: {t.FullName}");
+            foreach (var m in t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly).Take(10))
+                Console.WriteLine($"    {m}");
+        }
+    }
     Console.WriteLine("--- AttributeFlags 位验证（精确：每属性独立 Terminal，取首个 cell） ---");
     foreach (var (label, sgr) in new[] { ("bold", "\x1b[1m"), ("dim", "\x1b[2m"),
              ("underline", "\x1b[4m"), ("inverse", "\x1b[7m"), ("italic", "\x1b[3m"), ("blink", "\x1b[5m") })

@@ -36,6 +36,9 @@
          选型见 docs/TERMINAL-RENDER-DECISION.md（双盲 spike：4/4 真实 VT 流夹具
          零修改渲染正确，CJK 双宽自带；MIT、headless、无 UI 依赖）。 -->
     <PackageReference Include="XTerm.NET" Version="1.1.2" />
+    <!-- XTerm.NET 的传递依赖，这里显式引用：渲染层用 wcwidth 判定
+         CJK 等双宽字符，跳过其在 cell 缓冲中的续格（见 TerminalView.RenderRow）。 -->
+    <PackageReference Include="Wcwidth" Version="3.0.0" />
   </ItemGroup>
 
   <ItemGroup>
