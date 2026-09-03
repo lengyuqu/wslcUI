@@ -129,6 +129,32 @@ public class ContainerInfo : INotifyPropertyChanged
     /// <summary>已查但无挂载——给 UI 显示"未挂载…"空态文案。</summary>
     public bool IsMountEmpty => _mountsLoaded && _mounts.Count == 0;
 
+    /// <summary>
+    /// 列表行单元格短文本（90px 列宽）。未查 / 已查无挂载 → 「—」；
+    /// 1 个 → 用 Left（volume 取 Name，否则取 Source，匿名回退）
+    /// "pgdata"；多个 → "firstName +N" / "firstSource +N"。
+    /// </summary>
+    public string MountListCell
+    {
+        get
+        {
+            if (!_mountsLoaded || _mounts.Count == 0) return "—";
+            var head = FirstLabel(_mounts[0]);
+            return _mounts.Count == 1 ? head : $"{head} +{_mounts.Count - 1}";
+        }
+    }
+
+    private static string FirstLabel(ContainerMount m) =>
+        !string.IsNullOrEmpty(m.Name) ? m.Name
+        : !string.IsNullOrEmpty(m.Source) ? m.Source
+        : "(匿名)";
+
+    /// <summary>
+    /// 详情面板运行信息区挂载行单元格（与端口并列，"镜像 / 端口 / 卷 / 创建 / ID / 状态原文"）。
+    /// 同上：未查 → "—"，已查空 → "—"，否则按 MountListCell 压缩逻辑。
+    /// </summary>
+    public string MountsKvCell => MountListCell;
+
     // ---- 派生状态：供 XAML 直接绑定（WinUI 3 无 DataTrigger，靠 Visibility 切换）----
 
     public ContainerStatusKind StatusKind => ClassifyStatus(Status);

@@ -135,10 +135,11 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="1.3*" />
                                     <ColumnDefinition Width="1.6*" />
-                                    <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="1.2*" />
-                                    <ColumnDefinition Width="110" />
-                                    <ColumnDefinition Width="104" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="1.1*" />
+                                    <ColumnDefinition Width="92" />
+                                    <ColumnDefinition Width="92" />
+                                    <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Content="名称" Style="{StaticResource HeaderButtonStyle}"
                                         Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Name" />
@@ -148,9 +149,11 @@
                                         Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Status" />
                                 <Button Grid.Column="3" Content="端口" Style="{StaticResource HeaderButtonStyle}"
                                         Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Ports" />
-                                <Button Grid.Column="4" Content="CPU" Style="{StaticResource HeaderButtonStyle}"
+                                <Button Grid.Column="4" Content="卷" Style="{StaticResource HeaderButtonStyle}"
+                                        Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="MountListCell" />
+                                <Button Grid.Column="5" Content="CPU" Style="{StaticResource HeaderButtonStyle}"
                                         Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Cpu" />
-                                <Button Grid.Column="5" Content="创建" Style="{StaticResource HeaderButtonStyle}"
+                                <Button Grid.Column="6" Content="创建" Style="{StaticResource HeaderButtonStyle}"
                                         Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="CreatedAt" />
                             </Grid>
 
@@ -172,10 +175,11 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="1.3*" />
                                                 <ColumnDefinition Width="1.6*" />
-                                                <ColumnDefinition Width="120" />
-                                                <ColumnDefinition Width="1.2*" />
-                                                <ColumnDefinition Width="110" />
-                                                <ColumnDefinition Width="104" />
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="1.1*" />
+                                                <ColumnDefinition Width="92" />
+                                                <ColumnDefinition Width="92" />
+                                                <ColumnDefinition Width="*" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="{x:Bind Name}" FontWeight="SemiBold"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
@@ -212,13 +216,17 @@
                                             <TextBlock Grid.Column="3" Text="{x:Bind Ports, Mode=OneWay}" FontSize="12" FontFamily="Consolas"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                            <TextBlock Grid.Column="4" Text="{x:Bind MountListCell, Mode=OneWay}" FontSize="12" FontFamily="Consolas"
+                                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                                       ToolTipService.ToolTip="{x:Bind MountsKvCell, Mode=OneWay}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                                 <TextBlock Text="{x:Bind Cpu, Mode=OneWay}" FontSize="12" FontFamily="Consolas" MinWidth="38" />
-                                                <ProgressBar Width="52" Height="4" MinWidth="0" Maximum="100"
+                                                <ProgressBar Width="44" Height="4" MinWidth="0" Maximum="100"
                                                              Value="{x:Bind CpuValue, Mode=OneWay}"
                                                              Visibility="{x:Bind HasStats, Mode=OneWay}" />
                                             </StackPanel>
-                                            <TextBlock Grid.Column="5" Text="{x:Bind CreatedAt, Mode=OneWay}" FontSize="12"
+                                            <TextBlock Grid.Column="6" Text="{x:Bind CreatedAt, Mode=OneWay}" FontSize="12"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                         </Grid>
@@ -1100,6 +1108,32 @@
                                                    Text="{x:Bind ViewModel.SelectedVolume.Mountpoint, Mode=OneWay}" />
                                     </Grid>
                                 </StackPanel>
+
+                                <TextBlock Text="被以下容器使用" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedVolume.UsedBy, Mode=OneWay}"
+                                              Visibility="{x:Bind ViewModel.SelectedVolume.HasUsedBy, Mode=OneWay}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="x:String">
+                                            <Grid Padding="0,2" ColumnSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="•" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind}" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="暂无已查看的容器引用此卷。"
+                                           FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedVolume.HasUsedBy), Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind ViewModel.UninspectedForVolumeHint, Mode=OneWay}"
+                                           FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
                                 <Button Content="删除卷" HorizontalAlignment="Stretch" Margin="0,12,0,0"
                                         Command="{x:Bind ViewModel.RemoveVolumeCommand}"
                                         IsEnabled="{x:Bind ViewModel.CanActOnVolume, Mode=OneWay}"

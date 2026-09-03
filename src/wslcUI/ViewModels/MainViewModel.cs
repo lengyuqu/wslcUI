@@ -215,6 +215,10 @@ public partial class MainViewModel : ObservableObject
             if (live is null) return;
             live.Mounts = mounts;
             live.MountsLoaded = true;
+
+            // 容器挂载变了 → 若卷页正显示某卷，反向表可能需要刷新。
+            if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
+                RefreshSelectedVolumeReverseMapping();
         }
         catch (OperationCanceledException) { /* 切换或 dispose，忽略 */ }
         catch (System.Exception ex)
@@ -228,6 +232,35 @@ public partial class MainViewModel : ObservableObject
             }
         }
     }
+
+    /// <summary>
+    /// 重算当前选中卷的 UsedBy 表。调用时机：某容器 Mounts 写入后、
+    /// RefreshAsync 后、或切到卷页时。
+    /// </summary>
+    private void RefreshSelectedVolumeReverseMapping()
+    {
+        var value = SelectedVolume;
+        if (value is null) return;
+
+        var usedBy = new List<string>();
+        var notInspected = 0;
+        foreach (var c in Containers)
+        {
+            if (!c.MountsLoaded) { notInspected++; continue; }
+            foreach (var m in c.Mounts)
+            {
+                if (!string.IsNullOrEmpty(m.Name) &&
+                    string.Equals(m.Name, value.Name, StringComparison.Ordinal))
+                {
+                    usedBy.Add(c.Name);
+                    break;
+                }
+            }
+        }
+        value.UsedBy = usedBy;
+        _uninspectedContainerCountForSelectedVolume = notInspected;
+        OnPropertyChanged(nameof(UninspectedForVolumeHint));
+    }
     partial void OnSelectedImageChanged(ImageInfo? value)
     {
         HasSelectedImage = value is not null;
@@ -235,7 +268,48 @@ public partial class MainViewModel : ObservableObject
         RecomputeCanStates();
     }
     partial void OnSelectedNetworkChanged(NetworkInfo? value) { HasSelectedNetwork = value is not null; RecomputeCanStates(); }
-    partial void OnSelectedVolumeChanged(VolumeInfo? value) { HasSelectedVolume = value is not null; RecomputeCanStates(); }
+    partial void OnSelectedVolumeChanged(VolumeInfo? value)
+    {
+        HasSelectedVolume = value is not null;
+        RecomputeCanStates();
+
+        // 反向扫描：已 inspect 过的容器中哪些引用了此卷。
+        // 按 mount.Name == volume.Name 匹配（区分大小写：wslc 自身大小写敏感）。
+        // 仅覆盖**已 MountsLoaded** 的容器——未点过的容器 Mounts 仍为空、
+        // 误判为零 = 把未查当无引用，混进"未使用"分类会误导用户删除。
+        // 因此用空 UsedBy + 一个提示文案坦白："其他容器尚未查看"。
+        if (value is null) return;
+        var usedBy = new List<string>();
+        var notInspected = 0;
+        foreach (var c in Containers)
+        {
+            if (!c.MountsLoaded) { notInspected++; continue; }
+            foreach (var m in c.Mounts)
+            {
+                if (!string.IsNullOrEmpty(m.Name) &&
+                    string.Equals(m.Name, value.Name, StringComparison.Ordinal))
+                {
+                    usedBy.Add(c.Name);
+                    break;
+                }
+            }
+        }
+        value.UsedBy = usedBy;
+        _uninspectedContainerCountForSelectedVolume = notInspected;
+        OnPropertyChanged(nameof(UninspectedForVolumeHint));
+    }
+
+    /// <summary>
+    /// 当前选中卷对应的"还有多少容器未 inspect"统计。
+    /// OnSelectedVolumeChanged 每次扫描时刷新；外部 Cancel 切换时不清
+    /// （让用户切回能恢复显示，提示"还有 N 个未查"是有用的提示）。
+    /// </summary>
+    private int _uninspectedContainerCountForSelectedVolume;
+
+    public string UninspectedForVolumeHint =>
+        _uninspectedContainerCountForSelectedVolume == 0
+            ? ""
+            : $"还有 {_uninspectedContainerCountForSelectedVolume} 个容器未查看（点过容器详情才会触发 inspect）。";
     partial void OnSelectedStatChanged(StatInfo? value)
     {
         HasSelectedStat = value is not null;
@@ -273,6 +347,10 @@ public partial class MainViewModel : ObservableObject
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
         SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
+
+        // 切到卷页且已选某卷时，重算反向表（用户可能新点过容器）。
+        if (value == ResourcePage.Volumes && SelectedVolume is not null)
+            RefreshSelectedVolumeReverseMapping();
     }
 
     private void RecomputeCanStates()
@@ -297,17 +375,18 @@ public partial class MainViewModel : ObservableObject
         var desc = SortDescending;
 
         FilteredContainers = new ObservableCollection<ContainerInfo>(OrderBy(
-            Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports)),
+            Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
             SortedColumn switch
             {
                 "Image" => c => c.Image,
                 "Status" => c => c.StatusLabel,
                 "Ports" => c => c.Ports,
+                "MountListCell" => c => c.MountListCell,
                 "Cpu" => c => c.Cpu,
                 "CreatedAt" => c => c.CreatedAt,
                 _ => c => c.Name,
             },
-            numeric: SortedColumn == "Cpu", desc));
+            numeric: SortedColumn is "Cpu" or "MountListCell", desc));
 
         FilteredImages = new ObservableCollection<ImageInfo>(OrderBy(
             Images.Where(i => Matches(q, i.Repository, i.Tag, i.Size, i.Reference)),
@@ -574,6 +653,12 @@ public partial class MainViewModel : ObservableObject
     {
         MergeStatsIntoContainers();
         ApplyFilter();
+
+        // 卷页在当前可见且已选中某卷时，新一次 Refresh 容器列表可能
+        // 改写 Mounts（同一实例 INPC，但**新增**容器可能也用了它）；
+        // 重新扫一次确保反向映射不陈旧。
+        if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
+            OnSelectedVolumeChanged(SelectedVolume);
     }
 
     private static string LabelOf(string column) => column switch
@@ -584,6 +669,7 @@ public partial class MainViewModel : ObservableObject
         "Ports" => "端口",
         "Cpu" => "CPU",
         "CreatedAt" => "创建",
+        "MountListCell" => "卷",
         "Repository" => "仓库",
         "Tag" => "标签",
         "Size" => "大小",
