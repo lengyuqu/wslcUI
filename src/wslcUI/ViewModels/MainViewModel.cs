@@ -218,6 +218,11 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private async Task LoadContainerMountsAsync(ContainerInfo target, CancellationToken ct)
     {
+        // 提前查一次 list 里的"活"实例，try/catch 两条路径共用 —— 避免重复 O(N) 扫
+        //（#8 微优化）。如果已被 Refresh/外部删除，本方法直接放弃，不写回任何东西。
+        var live = Containers.FirstOrDefault(c => c.Name == target.Name);
+        if (live is null) return;
+
         try
         {
             var mounts = await _client.InspectContainerAsync(target.Name, ct).ConfigureAwait(true);
@@ -228,8 +233,6 @@ public partial class MainViewModel : ObservableObject
             // ② 选中的实例已变 ——陈旧，不写；
             // ③ 列表里该名容器已不存在（已被删除/移除）——陈旧，不写。
             if (!ReferenceEquals(SelectedContainer, target)) return;
-            var live = Containers.FirstOrDefault(c => c.Name == target.Name);
-            if (live is null) return;
             live.Mounts = mounts;
             live.MountsLoaded = true;
 
@@ -243,14 +246,10 @@ public partial class MainViewModel : ObservableObject
             // 仅 debug 留痕（inspect 是辅助数据，不能弹 InfoBar 干扰主流程），
             // 但要让用户能区分"未挂载"与"查不到"——所以状态栏显示一句简短提示。
             System.Diagnostics.Debug.WriteLine($"[wslcUI] inspect {target.Name} 失败: {ex.Message}");
-            if (!ct.IsCancellationRequested)
+            if (!ct.IsCancellationRequested && ReferenceEquals(SelectedContainer, target))
             {
-                var live = Containers.FirstOrDefault(c => c.Name == target.Name);
-                if (live is not null)
-                {
-                    live.MountsLoaded = true;
-                    Status = $"inspect {target.Name} 失败";
-                }
+                live.MountsLoaded = true;
+                Status = $"inspect {target.Name} 失败";
             }
         }
     }
