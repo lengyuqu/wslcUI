@@ -100,10 +100,10 @@ public sealed partial class MainWindow : Window
     /// 开窗前做 ConPTY 健康预检（带 5 分钟缓存）：机器级 attach 故障时
     /// （子进程 0xC0000142 启动即死）弹诊断而不是开一个永远黑屏的死窗口。
     /// </summary>
-    private void OpenTerminal_Click(object sender, RoutedEventArgs e)
+    private async void OpenTerminal_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;
-        if (!EnsureConPtyHealthy()) return;
+        if (!await EnsureConPtyHealthyAsync()) return;
         var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
         term.Activate();
     }
@@ -112,24 +112,33 @@ public sealed partial class MainWindow : Window
     /// 容器行双击：直接打开终端（与 docker desktop 一致）。
     /// SelectedItem 已通过 TwoWay 绑定自动同步，无需从 sender 二次取数据。
     /// </summary>
-    private void ContainersList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    private async void ContainersList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;
-        if (!EnsureConPtyHealthy()) return;
+        if (!await EnsureConPtyHealthyAsync()) return;
         var term = new TerminalWindow(ViewModel.SelectedContainer.Name);
         term.Activate();
     }
 
-    /// <summary>ConPTY 健康预检兜底：不健康时弹 ContentDialog 说明原因。</summary>
-    private bool EnsureConPtyHealthy()
+    /// <summary>
+    /// ConPTY 健康预检兜底：不健康时弹 ContentDialog 说明原因。
+    /// 探测要起一次 conhost 并等子进程退出（最长 5s），放到线程池执行，
+    /// 不阻塞 UI 线程；await 续体经 DispatcherQueueSynchronizationContext
+    /// 回到 UI 线程，弹对话框安全。
+    /// </summary>
+    private async Task<bool> EnsureConPtyHealthyAsync()
     {
-        var (healthy, exitCode) = wslcUI.Terminal.PseudoConsole.ProbeHealth();
+        var (healthy, exitCode) = await Task.Run(wslcUI.Terminal.PseudoConsole.ProbeHealth);
         if (healthy) return true;
 
+        // 0xFFFFFFFF = 探针自身失败（非子进程退出码），文案区分开避免误导。
+        var reason = exitCode == unchecked((int)0xFFFFFFFF)
+            ? "ConPTY 探测过程自身失败（无法创建伪控制台或启动测试进程）"
+            : $"测试子进程退出码 0x{unchecked((uint)exitCode):X8}";
         var dialog = new ContentDialog
         {
             Title = "终端功能暂不可用",
-            Content = $"此机器的 ConPTY 组件存在系统故障（测试子进程退出码 0x{unchecked((uint)exitCode):X8}），" +
+            Content = $"此机器的 ConPTY 组件存在系统故障（{reason}），" +
                       "打开的终端窗口将无法显示任何输出。\n\n" +
                       "建议：安装 Windows 更新后重试；也可把此退出码反馈给系统管理员。",
             CloseButtonText = "知道了",

@@ -182,7 +182,9 @@ internal sealed class PseudoConsole : IDisposable
             }
             catch
             {
-                // 探针自身失败视为不健康（exitCode 保持 hr/0 兜底）
+                // 探针自身失败（属性列表 / CreateProcessW 等中间步骤抛异常）视为
+                // 不健康：exitCode 置失败标记。不能保留 0——那会被误判为健康。
+                exitCode = unchecked((int)0xFFFFFFFF);
             }
             finally
             {
