@@ -99,6 +99,8 @@ public class ContainerInfo : INotifyPropertyChanged
             Raise();
             Raise(nameof(HasMounts));
             Raise(nameof(MountCount));
+            Raise(nameof(MountListCell));   // 派生属性依赖 _mounts，必须显式通知（OneWay 列表行卷列）
+            Raise(nameof(MountsKvCell));
             Raise(nameof(MountSummary));
         }
     }

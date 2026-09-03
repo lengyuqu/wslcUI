@@ -190,10 +190,27 @@ public partial class MainViewModel : ObservableObject
         _inspectCts = null;
 
         if (value is null) return;
+
+        // 短路同实例重发：Repeated clicks on the same row waste a CLI roundtrip
+        // once Mounts have already been loaded. ReferenceEquals is intentional —
+        // wslc list -a reuses ContainerInfo instances across refreshes
+        // (UpdateContainersInPlace), so an identity check is stable per session.
+        if (ReferenceEquals(_lastInspectTarget, value) && value.MountsLoaded) return;
+        _lastInspectTarget = value;
+
         _inspectCts = new CancellationTokenSource();
         // value 是引用捕获；async 续体回到 UI 线程后再按实例身份比对。
+        // fire-and-forget：partial void 不支持 async，所以无法 await。
+        // 失败/取消的处理（含陈旧数据丢弃）在 LoadContainerMountsAsync 内部完成。
         _ = LoadContainerMountsAsync(value, _inspectCts.Token);
     }
+
+    /// <summary>
+    /// 上一次发起 inspect 的容器实例。仅以引用相等短路，防止 ListView 双绑
+    /// 同实例重发 setter 时重复拉 CLI。MountsLoaded 标志 sticky（RefreshAsync
+    /// 复用实例不重置），所以同实例已查就不再触发。
+    /// </summary>
+    private ContainerInfo? _lastInspectTarget;
 
     /// <summary>
     /// 拉取选中容器的 Mounts 并回填。失败时静默（inspect 是辅助数据，
@@ -218,29 +235,33 @@ public partial class MainViewModel : ObservableObject
 
             // 容器挂载变了 → 若卷页正显示某卷，反向表可能需要刷新。
             if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
-                RefreshSelectedVolumeReverseMapping();
+                RecomputeUsedBy(SelectedVolume);
         }
         catch (OperationCanceledException) { /* 切换或 dispose，忽略 */ }
         catch (System.Exception ex)
         {
+            // 仅 debug 留痕（inspect 是辅助数据，不能弹 InfoBar 干扰主流程），
+            // 但要让用户能区分"未挂载"与"查不到"——所以状态栏显示一句简短提示。
             System.Diagnostics.Debug.WriteLine($"[wslcUI] inspect {target.Name} 失败: {ex.Message}");
-            // 标记为已查（即便失败），让 UI 退出 spinner 显示空态，而不是无限转圈。
             if (!ct.IsCancellationRequested)
             {
                 var live = Containers.FirstOrDefault(c => c.Name == target.Name);
-                if (live is not null) live.MountsLoaded = true;
+                if (live is not null)
+                {
+                    live.MountsLoaded = true;
+                    Status = $"inspect {target.Name} 失败";
+                }
             }
         }
     }
 
     /// <summary>
-    /// 重算当前选中卷的 UsedBy 表。调用时机：某容器 Mounts 写入后、
-    /// RefreshAsync 后、或切到卷页时。
+    /// 选中卷变化、容器 Mounts 写入后、RefreshAsync 后、切到卷页时调用，重算 UsedBy。
+    /// 提取自 OnSelectedVolumeChanged 内联段——三处触发共享同一扫描逻辑。
     /// </summary>
-    private void RefreshSelectedVolumeReverseMapping()
+    private void RecomputeUsedBy(VolumeInfo? volume)
     {
-        var value = SelectedVolume;
-        if (value is null) return;
+        if (volume is null) return;
 
         var usedBy = new List<string>();
         var notInspected = 0;
@@ -250,16 +271,21 @@ public partial class MainViewModel : ObservableObject
             foreach (var m in c.Mounts)
             {
                 if (!string.IsNullOrEmpty(m.Name) &&
-                    string.Equals(m.Name, value.Name, StringComparison.Ordinal))
+                    string.Equals(m.Name, volume.Name, StringComparison.Ordinal))
                 {
                     usedBy.Add(c.Name);
                     break;
                 }
             }
         }
-        value.UsedBy = usedBy;
-        _uninspectedContainerCountForSelectedVolume = notInspected;
-        OnPropertyChanged(nameof(UninspectedForVolumeHint));
+        volume.UsedBy = usedBy;
+
+        // 仅在计数变化时通知 hint，避免反复切卷导致 XAML 重复拉 binding。
+        if (_uninspectedContainerCountForSelectedVolume != notInspected)
+        {
+            _uninspectedContainerCountForSelectedVolume = notInspected;
+            OnPropertyChanged(nameof(UninspectedForVolumeHint));
+        }
     }
     partial void OnSelectedImageChanged(ImageInfo? value)
     {
@@ -278,25 +304,7 @@ public partial class MainViewModel : ObservableObject
         // 仅覆盖**已 MountsLoaded** 的容器——未点过的容器 Mounts 仍为空、
         // 误判为零 = 把未查当无引用，混进"未使用"分类会误导用户删除。
         // 因此用空 UsedBy + 一个提示文案坦白："其他容器尚未查看"。
-        if (value is null) return;
-        var usedBy = new List<string>();
-        var notInspected = 0;
-        foreach (var c in Containers)
-        {
-            if (!c.MountsLoaded) { notInspected++; continue; }
-            foreach (var m in c.Mounts)
-            {
-                if (!string.IsNullOrEmpty(m.Name) &&
-                    string.Equals(m.Name, value.Name, StringComparison.Ordinal))
-                {
-                    usedBy.Add(c.Name);
-                    break;
-                }
-            }
-        }
-        value.UsedBy = usedBy;
-        _uninspectedContainerCountForSelectedVolume = notInspected;
-        OnPropertyChanged(nameof(UninspectedForVolumeHint));
+        RecomputeUsedBy(value);
     }
 
     /// <summary>
@@ -338,6 +346,16 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnCurrentPageChanged(ResourcePage value)
     {
+        // 离开卷页时清零"未查容器"提示计数：旧值属于上一卷的扫描，
+        // 切回去 OnSelectedVolumeChanged 会重算；但留在原地读会显示陈旧数字。
+        if (_lastPage == ResourcePage.Volumes && value != ResourcePage.Volumes &&
+            _uninspectedContainerCountForSelectedVolume != 0)
+        {
+            _uninspectedContainerCountForSelectedVolume = 0;
+            OnPropertyChanged(nameof(UninspectedForVolumeHint));
+        }
+        _lastPage = value;
+
         IsContainersPage = value == ResourcePage.Containers;
         IsImagesPage = value == ResourcePage.Images;
         IsNetworksPage = value == ResourcePage.Networks;
@@ -350,8 +368,14 @@ public partial class MainViewModel : ObservableObject
 
         // 切到卷页且已选某卷时，重算反向表（用户可能新点过容器）。
         if (value == ResourcePage.Volumes && SelectedVolume is not null)
-            RefreshSelectedVolumeReverseMapping();
+            RecomputeUsedBy(SelectedVolume);
     }
+
+    /// <summary>
+    /// 上一次的 CurrentPage。仅用于在 OnCurrentPageChanged 中检测"离开卷页"
+    /// 以清零提示计数（partial void 参数 value 是新页，没法直接看旧页）。
+    /// </summary>
+    private ResourcePage _lastPage = ResourcePage.Containers;
 
     private void RecomputeCanStates()
     {
@@ -374,19 +398,23 @@ public partial class MainViewModel : ObservableObject
         var q = (SearchText ?? "").Trim();
         var desc = SortDescending;
 
-        FilteredContainers = new ObservableCollection<ContainerInfo>(OrderBy(
-            Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
-            SortedColumn switch
-            {
-                "Image" => c => c.Image,
-                "Status" => c => c.StatusLabel,
-                "Ports" => c => c.Ports,
-                "MountListCell" => c => c.MountListCell,
-                "Cpu" => c => c.Cpu,
-                "CreatedAt" => c => c.CreatedAt,
-                _ => c => c.Name,
-            },
-            numeric: SortedColumn is "Cpu" or "MountListCell", desc));
+        FilteredContainers = new ObservableCollection<ContainerInfo>(
+            SortedColumn == "MountListCell"
+                ? OrderByInt(
+                    Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
+                    c => c.MountCount, desc)
+                : OrderBy(
+                    Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
+                    SortedColumn switch
+                    {
+                        "Image" => c => c.Image,
+                        "Status" => c => c.StatusLabel,
+                        "Ports" => c => c.Ports,
+                        "Cpu" => c => c.Cpu,
+                        "CreatedAt" => c => c.CreatedAt,
+                        _ => c => c.Name,
+                    },
+                    numeric: SortedColumn == "Cpu", desc));
 
         FilteredImages = new ObservableCollection<ImageInfo>(OrderBy(
             Images.Where(i => Matches(q, i.Repository, i.Tag, i.Size, i.Reference)),
@@ -467,6 +495,15 @@ public partial class MainViewModel : ObservableObject
                 : string.Compare(x, y, CultureInfo.CurrentCulture, CompareOptions.IgnoreCase);
             return cmp * factor;
         });
+        return list;
+    }
+
+    /// <summary>按 int 键排序——用于「卷」列按挂载数排，避免走字符串前缀数字解析失真（`pgdata +1` 拼字符串会被错配）。</summary>
+    private static List<T> OrderByInt<T>(IEnumerable<T> source, Func<T, int> selector, bool descending)
+    {
+        var list = source.ToList();
+        var factor = descending ? -1 : 1;
+        list.Sort((a, b) => selector(a).CompareTo(selector(b)) * factor);
         return list;
     }
 
@@ -658,7 +695,7 @@ public partial class MainViewModel : ObservableObject
         // 改写 Mounts（同一实例 INPC，但**新增**容器可能也用了它）；
         // 重新扫一次确保反向映射不陈旧。
         if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
-            OnSelectedVolumeChanged(SelectedVolume);
+            RecomputeUsedBy(SelectedVolume);
     }
 
     private static string LabelOf(string column) => column switch
