@@ -176,8 +176,10 @@ internal static class WslcCli
     // ---- volumes (no SDK projection) ----
     public static async Task<IReadOnlyList<VolumeInfo>> ListVolumesAsync(CancellationToken ct)
     {
-        var (exit, stdout, stderr) = await RunAsync(new[] { "volume", "ls" }, ct).ConfigureAwait(false);
-        return exit == 0 ? ParseVolumeList(stdout) : throw CliFailed("wslc volume ls", exit, stderr);
+        // 必须走 --format json：table 格式只有 DRIVER/VOLUME NAME 两列，
+        // 挂载点（Mountpoint）只在 json 输出里存在（wslc 2.9.9 实测）。
+        var (exit, stdout, stderr) = await RunAsync(new[] { "volume", "ls", "--format", "json" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseVolumeListJson(stdout) : throw CliFailed("wslc volume ls", exit, stderr);
     }
 
     public static async Task CreateVolumeAsync(string name, CancellationToken ct)
@@ -499,34 +501,47 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// Parses <c>wslc volume ls</c> output. Real header on wslc 2.9.9.0:
-    /// <c>DRIVER   VOLUME NAME</c>
+    /// Parses <c>wslc volume ls --format json</c> output. 实测 wslc 2.9.9.0
+    /// 输出为**逐行 JSON 对象**（每行一个卷，非数组）：{"Driver":...,"Mountpoint":...,"Name":...}；
+    /// 兼容数组包裹形式。table 格式没有挂载点列，挂载点只能从这里拿。
     /// </summary>
-    private static IReadOnlyList<VolumeInfo> ParseVolumeList(string output)
+    internal static IReadOnlyList<VolumeInfo> ParseVolumeListJson(string output)
     {
         var result = new List<VolumeInfo>();
-        var (headerLine, boundaries, headerIdx) = LocateHeader(output);
-        if (headerLine is null) return result;
+        if (string.IsNullOrWhiteSpace(output)) return result;
 
-        var nameIdx = FindColumn(boundaries, headerLine, "VOLUME NAME");
-        if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAME");
-        var driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
-        if (nameIdx < 0) return result;
-
-        var lines = output.Split('\n');
-        for (int i = headerIdx + 1; i < lines.Length; i++)
+        if (output.TrimStart().StartsWith('['))
         {
-            var line = lines[i].TrimEnd('\r');
-            if (line.Length == 0) continue;
-            var cells = SplitByColumns(boundaries, headerLine, line);
-            if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
-            result.Add(new VolumeInfo
-            {
-                Name = cells[nameIdx],
-                Driver = driverIdx >= 0 && cells.Count > driverIdx ? cells[driverIdx] : "",
-            });
+            using var doc = System.Text.Json.JsonDocument.Parse(output);
+            foreach (var el in doc.RootElement.EnumerateArray())
+                AddVolume(result, el);
+            return result;
+        }
+
+        foreach (var line in output.Split('\n'))
+        {
+            var t = line.Trim();
+            if (t.Length == 0 || !t.StartsWith('{')) continue;
+            using var doc = System.Text.Json.JsonDocument.Parse(t);
+            AddVolume(result, doc.RootElement);
         }
         return result;
+    }
+
+    private static void AddVolume(List<VolumeInfo> result, System.Text.Json.JsonElement el)
+    {
+        string S(string prop) =>
+            el.ValueKind == System.Text.Json.JsonValueKind.Object &&
+            el.TryGetProperty(prop, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String
+                ? p.GetString() ?? "" : "";
+        var name = S("Name");
+        if (name.Length == 0) return;
+        result.Add(new VolumeInfo
+        {
+            Name = name,
+            Driver = S("Driver"),
+            Mountpoint = S("Mountpoint"),
+        });
     }
 
     /// <summary>
