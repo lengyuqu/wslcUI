@@ -121,6 +121,20 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 附加到运行中容器的前台进程（`wslc attach &lt;name&gt;`），区别于 exec 的
+    /// 「启动一个新进程」。按钮可见性由 <c>CanAttachContainer</c> 守门（仅 Running），
+    /// 这里仍兜底校验一次，处理 0xC0000142 等机器级故障。
+    /// </summary>
+    private async void Attach_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedContainer is null) return;
+        if (!ViewModel.SelectedContainer.IsRunning) return;
+        if (!await EnsureConPtyHealthyAsync()) return;
+        var term = new TerminalWindow(ViewModel.SelectedContainer.Name, TerminalWindow.Mode.Attach);
+        term.Activate();
+    }
+
+    /// <summary>
     /// ConPTY 健康预检兜底：不健康时弹 ContentDialog 说明原因。
     /// 探测要起一次 conhost 并等子进程退出（最长 5s），放到线程池执行，
     /// 不阻塞 UI 线程；await 续体经 DispatcherQueueSynchronizationContext

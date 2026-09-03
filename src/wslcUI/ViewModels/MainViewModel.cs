@@ -115,6 +115,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial bool CanCreateVolume { get; set; }
     [ObservableProperty] public partial bool CanPull { get; set; }
     [ObservableProperty] public partial bool CanBuild { get; set; }
+    // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
+    [ObservableProperty] public partial bool CanAttachContainer { get; set; }
 
     // ---------------- 导航 / 搜索 / 排序 / 面板 ----------------
 
@@ -366,6 +368,7 @@ public partial class MainViewModel : ObservableObject
     private void RecomputeCanStates()
     {
         CanActOnContainer = HasSelectedContainer && !IsBusy;
+        CanAttachContainer = HasSelectedContainer && !IsBusy && SelectedContainer is { IsRunning: true };
         CanActOnImage = HasSelectedImage && !IsBusy;
         CanActOnNetwork = HasSelectedNetwork && !IsBusy;
         CanActOnVolume = HasSelectedVolume && !IsBusy;

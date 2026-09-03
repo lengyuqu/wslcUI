@@ -954,6 +954,10 @@
                                                 Click="OpenTerminal_Click"
                                                 IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
                                     </Grid>
+                                    <Button Content="附加到容器"
+                                            HorizontalAlignment="Stretch"
+                                            Click="Attach_Click"
+                                            Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.CanAttachContainer), Mode=OneWay}" />
                                     <Button Content="删除容器" HorizontalAlignment="Stretch"
                                             Command="{x:Bind ViewModel.DeleteContainerCommand}"
                                             IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}"

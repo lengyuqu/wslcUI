@@ -19,6 +19,26 @@ namespace wslcUI;
 /// </summary>
 public sealed partial class TerminalWindow : Window
 {
+    /// <summary>
+    /// 终端打开模式：
+    /// - <see cref="Exec"/>：在容器内启动新进程（`wslc exec -it &lt;name&gt; /bin/sh`）。
+    ///   适用于任何可启动容器；与 docker desktop 的「exec」一致。
+    /// - <see cref="Attach"/>：附加到容器内**当前**前台进程（`wslc attach &lt;name&gt;`）。
+    ///   仅 Running 容器有意义（容器内必须有前台 stdin/stdout），UI 在按钮处守门。
+    /// </summary>
+    public enum Mode { Exec, Attach }
+
+    /// <summary>
+    /// 构造 ConPTY 命令行。抽出来便于单测覆盖两条分支
+    /// （容器名加引号防 CreateProcessW 拆分参数是稳定不变的事实，
+    /// 但命令拼接本身是会被未来的 wslc flag 改动影响的部分）。
+    /// </summary>
+    internal static string BuildCommand(string exePath, string container, Mode mode) => mode switch
+    {
+        Mode.Attach => $"\"{exePath}\" attach \"{container}\"",
+        _ => $"\"{exePath}\" exec -it \"{container}\" /bin/sh",
+    };
+
     private readonly PseudoConsole? _pty;
     private readonly string _container;
     private readonly XTerm.Terminal? _terminal;
@@ -29,11 +49,15 @@ public sealed partial class TerminalWindow : Window
     // 关窗标记：PTY 读线程是后台线程，窗口关闭后输出回调仍可能到达。
     private volatile bool _closed;
 
-    public TerminalWindow(string container)
+    public TerminalWindow(string container, Mode mode = Mode.Exec)
     {
         this.InitializeComponent();
         _container = container;
-        Title = $"终端 — {container}";
+        Title = mode switch
+        {
+            Mode.Attach => $"附加 — {container}",
+            _ => $"终端 — {container}",
+        };
         this.AppWindow.Resize(new Windows.Graphics.SizeInt32(900, 560));
         this.Closed += TerminalWindow_Closed;
 
@@ -41,7 +65,7 @@ public sealed partial class TerminalWindow : Window
         {
             var exe = WslcCli.ExePath;
             // 容器名加引号：名字含空格时不会被 CreateProcessW 的命令行解析拆开。
-            var cmd = $"\"{exe}\" exec -it \"{container}\" /bin/sh";
+            var cmd = BuildCommand(exe, container, mode);
             _pty = new PseudoConsole(cmd, 100, 30);
 
             _terminal = new XTerm.Terminal(new XTerm.Options.TerminalOptions
@@ -87,10 +111,13 @@ public sealed partial class TerminalWindow : Window
         catch (Exception ex)
         {
             _terminal = null;
-            // 启动失败：InputBox 降级为错误横幅（PTY 正常时会收起它）
+            // 启动失败：InputBox 降级为错误横幅（PTY 正常时会收起它）。
+            // attach 失败原因不同（容器内无前台进程 / PID 1 已退出），
+            // 给一条更有针对性的建议；exec 仍提示 start。
             InputBox.Visibility = Visibility.Visible;
-            InputBox.PlaceholderText =
-                $"无法启动终端: {ex.Message} — 请确认容器 {container} 正在运行 (wslc start {container})。";
+            InputBox.PlaceholderText = mode == Mode.Attach
+                ? $"无法附加到容器: {ex.Message} — 容器内可能有前台 stdin/stdout 进程才能 attach。"
+                : $"无法启动终端: {ex.Message} — 请确认容器 {container} 正在运行 (wslc start {container})。";
         }
 
         if (_pty is not null)

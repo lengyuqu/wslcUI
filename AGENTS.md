@@ -181,7 +181,8 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 
 - ~~完整 VT 终端渲染~~ ✅ 已完成（R1 SGR → R2 选型 → R3 XTerm.NET cell 渲染，见 `docs/TERMINAL-RENDER-DECISION.md`）；视觉真机验收待本机 ConPTY 故障修复（见上）。
 - 镜像自动构建改为 SDK 的 `<WslcImage>` MSBuild 集成（CI 打包用，适合把 wslcUI 自身打包成镜像）。
-- ~~真键盘事件转发~~ ✅ 已完成（R4）：`TerminalInputMapper`（纯函数可单测）+ `TerminalView` 聚焦/KeyDown/CharacterReceived/粘贴（Shift+Insert、Ctrl+Shift+V）→ `InputData` 事件 → PTY stdin；InputBox 已收起（仅 PTY 启动失败时作错误横幅）。注意：WinRT 的 Alt 是 `VirtualKeyModifiers.Menu`；`Key` 枚举无字母键，Ctrl/Alt+字母由映射器自合成。剩余：attach 到已运行进程。
+- ~~真键盘事件转发~~ ✅ 已完成（R4）：`TerminalInputMapper`（纯函数可单测）+ `TerminalView` 聚焦/KeyDown/CharacterReceived/粘贴（Shift+Insert、Ctrl+Shift+V）→ `InputData` 事件 → PTY stdin；InputBox 已收起（仅 PTY 启动失败时作错误横幅）。注意：WinRT 的 Alt 是 `VirtualKeyModifiers.Menu`；`Key` 枚举无字母键，Ctrl/Alt+字母由映射器自合成。
+- ~~attach 到已运行进程~~ ✅ 已完成：`wslc attach <name>` 路径接通。`TerminalWindow` 加 `Mode { Exec, Attach }` 枚举 + `BuildCommand(exe, container, mode)`（`internal static`、有 2 例单测）→ Exec 仍拼 `exec -it /bin/sh`、Attach 拼 `attach`（无 -it 无 shell：目标是容器内现有 PID 1 / 前台进程）。`CanAttachContainer` = 选中且 Running（停掉的容器无前台进程可附加，按钮自动隐藏）；`MainWindow.xaml` 容器详情 StackPanel 加 "附加到容器" 按钮（仅 Running 时可见），`Attach_Click` 复用 `EnsureConPtyHealthyAsync` 预检。启动失败时 InputBox 横幅给差异化建议。视觉验收仍待 P1a。
 - ~~容器详情面板关联数据卷~~ ✅ 已完成（`InspectContainerAsync`）：`wslc inspect <name> --format json` → `Mounts[]` → `ContainerMount`（Name / Destination / Source / Type / ReadWrite → `Display` 串 "src → dest"），详情面板新增「挂载」区块，三个互斥 Visibility（`IsMountLoading` 读取中 / `IsMountEmpty` 无挂载 / `HasMounts` ItemsControl+DataTemplate 列表）。按需拉取而非 N+1 入 Refresh，独立 `_inspectCts` 防快速切选中；解析器测试 8 例见 `tests/wslcUI.Tests/Services/InspectContainerJsonTests.cs`。
 
 ## 6. 关键约束与坑
