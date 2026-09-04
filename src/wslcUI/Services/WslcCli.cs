@@ -307,22 +307,43 @@ internal static class WslcCli
     //
     //  wslc 的 stderr 尾部带「错误代码: XXXX」机器码（如 WSLC_E_CONTAINER_
     //  NOT_FOUND，真机 verify V3/V4 已观测）。直接把原文抛给 InfoBar 对普通
-    //  用户不可读，也没有「下一步该做什么」。这里按已观测错误码 + wslc 惯例
-    //  建立映射；未命中返回 null，调用方保留原文兜底。
+    //  用户不可读，也没有「下一步该做什么」。
+    //
+    //  码名来源：官方 wslcsdk.h 的 WSLC_E_* 常量（0x8004_0601..060F，经
+    //  docs.rs/wslc-sys 与 wsl.dev C# API 参考 Error 枚举双重核对）。未命中
+    //  返回 null，调用方保留原文兜底；未命中码会 Debug.WriteLine 留痕（H2
+    //  随用随补的信号源）。
     // ====================================================================
 
     private static readonly Dictionary<string, string> ErrorHints = new()
     {
-        ["WSLC_E_CONTAINER_NOT_FOUND"] = "找不到该容器，可能已被删除。刷新列表后重试。",
+        // --- 官方 WSLC_E_*（wslcsdk.h 0x8004_0601..060F，按码值排序）---
         ["WSLC_E_IMAGE_NOT_FOUND"] = "找不到该镜像，可能已被删除。刷新列表后重试。",
-        ["WSLC_E_NETWORK_NOT_FOUND"] = "找不到该网络，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_CONTAINER_PREFIX_AMBIGUOUS"] = "该名称前缀匹配到多个容器。请使用完整容器名。",
+        ["WSLC_E_CONTAINER_NOT_FOUND"] = "找不到该容器，可能已被删除。刷新列表后重试。",
         ["WSLC_E_VOLUME_NOT_FOUND"] = "找不到该卷，可能已被删除。刷新列表后重试。",
-        ["WSLC_E_CONTAINER_RUNNING"] = "容器正在运行。请先停止容器再执行该操作。",
+        ["WSLC_E_CONTAINER_NOT_RUNNING"] = "容器未运行。请先启动容器再执行该操作（附加/日志等都需要运行态）。",
+        ["WSLC_E_CONTAINER_IS_RUNNING"] = "容器正在运行。请先停止容器再执行该操作。",
+        ["WSLC_E_SESSION_RESERVED"] = "该会话名被系统保留，请换一个名字。",
+        ["WSLC_E_INVALID_SESSION_NAME"] = "会话名无效：请只使用字母、数字、连字符和下划线。",
+        ["WSLC_E_NETWORK_NOT_FOUND"] = "找不到该网络，可能已被删除。刷新列表后重试。",
+        ["WSLC_E_WU_SEARCH_FAILED"] = "Windows 更新检索失败：请检查网络连接后重试。",
+        ["WSLC_E_SDK_UPDATE_NEEDED"] = "WSL 组件需要更新：请运行 `wsl --update` 后重试。",
+        ["WSLC_E_CONTAINER_DISABLED"] = "WSL 容器功能未启用：请在「启用或关闭 Windows 功能」中开启相关组件。",
+        ["WSLC_E_REGISTRY_BLOCKED_BY_POLICY"] = "注册表访问被组策略阻止：请联系管理员或检查策略设置。",
+        ["WSLC_E_VOLUME_NOT_AVAILABLE"] = "卷当前不可用：可能被其他进程占用，请稍后重试。",
+        ["WSLC_E_SESSION_NOT_FOUND"] = "找不到该会话，可能已被关闭。",
+
+        // --- WinRT/COM 标准 HRESULT（平台稳定，非 wslc 专属）---
+        ["E_INVALIDARG"] = "参数无效：请检查名称是否包含非法字符（空格、引号或特殊符号）。",
+        ["E_NOTFOUND"] = "未找到目标资源。刷新列表后重试。",
+        ["E_ACCESSDENIED"] = "访问被拒绝：请以管理员身份运行，或检查文件/目录权限。",
+        ["E_FAIL"] = "操作失败（未指定原因）。可打开日志抽屉查看 wslc 原始输出定位问题。",
+
+        // --- 惯例预置（官方清单未收录，真机观测后再校正；未命中无副作用）---
         ["WSLC_E_NETWORK_IN_USE"] = "该网络正被容器使用。请先断开使用它的容器。",
         ["WSLC_E_VOLUME_IN_USE"] = "该卷正被容器使用。请先停止使用它的容器。",
         ["WSLC_E_IMAGE_IN_USE"] = "该镜像正被容器引用。请先删除引用它的容器。",
-        ["E_INVALIDARG"] = "参数无效：请检查名称是否包含非法字符（空格、引号或特殊符号）。",
-        ["E_NOTFOUND"] = "未找到目标资源。刷新列表后重试。",
     };
 
     /// <summary>
@@ -346,6 +367,10 @@ internal static class WslcCli
                 if (brief.Length > 80) brief = brief[..80] + "…";
                 return $"{hint}（{code}：{brief}）";
             }
+
+            // H2 被动收集：未映射码留痕。真机跑出新码时在调试输出里可见，
+            // 「随用随补」以此信号为准（InfoBar 显示裸码也是同一信号）。
+            System.Diagnostics.Debug.WriteLine($"[wslcUI] 未映射错误码: {code}");
         }
 
         // 无错误码时按 stderr 关键词兜底（如 WSL 未装/未启动的引导文案）。

@@ -104,4 +104,43 @@ public class TranslateCliErrorTests
         Assert.NotNull(img);
         Assert.Contains("镜像", img);
     }
+
+    // ---- H2 扩充：官方 wslcsdk.h 错误码全集核对（0x8004_0601..060F）----
+
+    [Fact]
+    public void OfficialCode_ContainerIsRunning_ExactNameHits()
+    {
+        // 官方码名是 CONTAINER_IS_RUNNING（此前表里写成 CONTAINER_RUNNING，
+        // 永不命中 —— 本用例锁定正确码名防回归）。
+        var msg = "wslc rm 失败: container is running\n错误代码: WSLC_E_CONTAINER_IS_RUNNING";
+        var result = WslcCli.TranslateCliError(msg);
+        Assert.NotNull(result);
+        Assert.Contains("正在运行", result);
+        Assert.Contains("WSLC_E_CONTAINER_IS_RUNNING", result);
+    }
+
+    [Fact]
+    public void OfficialCode_ContainerNotRunning_HitsForAttachScenario()
+    {
+        // attach 到未运行容器是典型触发场景（UI 按钮已守门，CLI 兜底）。
+        var msg = "wslc attach 失败: container not running\n错误代码: WSLC_E_CONTAINER_NOT_RUNNING";
+        var result = WslcCli.TranslateCliError(msg);
+        Assert.NotNull(result);
+        Assert.Contains("未运行", result);
+    }
+
+    [Theory]
+    [InlineData("WSLC_E_CONTAINER_PREFIX_AMBIGUOUS", "前缀")]
+    [InlineData("WSLC_E_SDK_UPDATE_NEEDED", "wsl --update")]
+    [InlineData("WSLC_E_CONTAINER_DISABLED", "未启用")]
+    [InlineData("WSLC_E_REGISTRY_BLOCKED_BY_POLICY", "组策略")]
+    [InlineData("WSLC_E_SESSION_NOT_FOUND", "会话")]
+    [InlineData("E_ACCESSDENIED", "权限")]
+    [InlineData("E_FAIL", "日志")]
+    public void OfficialCode_Samples_Translate(string code, string expectedFragment)
+    {
+        var result = WslcCli.TranslateCliError($"错误代码: {code}");
+        Assert.NotNull(result);
+        Assert.Contains(expectedFragment, result);
+    }
 }
