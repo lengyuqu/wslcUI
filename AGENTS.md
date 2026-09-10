@@ -7,7 +7,7 @@
 
 Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `wslc` 套一个 WinUI 3 原生 GUI 外壳。
 
-- 技术栈：**C# + .NET 8 + WinUI 3（Windows App SDK 1.6）+ CommunityToolkit.Mvvm**。
+- 技术栈：**C# + .NET 10 + WinUI 3（Windows App SDK 2.4）+ CommunityToolkit.Mvvm**。
 - 后端集成 **API 优先 + CLI 桥接**：镜像列举/拉取/运行走 `Microsoft.WSL.Containers` SDK；**容器列举 / 按名启停 / 删除 / 日志**，以及**网络 / 卷的整套 CRUD**、**镜像构建**（`wslc build -t`）、**交互式终端**（`wslc exec -it`，经 ConPTY 真 TTY），因 2.9.9 SDK 无对应投影（见第 5 节），桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`）。
 
 ## 2. 仓库与协作
@@ -47,6 +47,21 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - **WinAppSDK 2.x 启动期 P0（unpackaged）**：① `Program.cs` 的 `Bootstrap.Initialize` 必须把 `majorMinor` 与 `minVersion` 同步升到目标版本（如 2.4 → `0x00020004` / `0x0002000400000000UL`），否则即便装上 2.4 runtime 也可能被 back-compat shim 拉到 1.6 跑；② `app.manifest` 必须显式声明 `<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"><application><maxversiontested Id="10.0.26100.0"/></application></compatibility>`，否则 OS 会启用旧兼容模式并触发"未为此应用启用必要功能"报错。两项**必须一起改**。
 - 首次编译若报 SDK 成员名错误，见第 5 节 TODO 清单，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/) 修正。
 
+### 构建 / 测试 / 验证（每次改动按顺序全过）
+
+| 命令 | 期望 |
+|------|------|
+| `dotnet build wslcUI.sln -c Debug` | 0 错误 0 警告。sln 含 4 个项目：`src/wslcUI`、`tests/wslcUI.Tests`、`tools/ConPtyProbe`、`tools/wslcUI.Verify` |
+| `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release` | 0 错误 0 警告（Debug 过不代表 Release 过） |
+| `dotnet test tests/wslcUI.Tests/wslcUI.Tests.csproj -p:Platform=x64 -c Debug` | 全部通过 |
+| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 9 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
+
+- `tools/XTermNetSpike` 是 P4-R2 选型 spike（已完成），**刻意未纳入 sln**，需要时单独 `dotnet run --project`。
+- 单测覆盖纯逻辑（CLI 表格/JSON 解析器、错误码映射、反转映射、键盘映射、VT 剥离、设置持久化）；
+  真机 verify 经 `InternalsVisibleTo` 直调 `WslcCli` / `PseudoConsole` 走真实代码路径，而非逻辑副本。
+- 这两个工具都只依赖 `dotnet`，不需要开 VS——**改完 `WslcCli` 的解析器务必补跑 verify**，
+  它是唯一能验证真实 wslc 输出列格式的关卡（单测夹具是人抓的快照，会随 wslc 版本过期）。
+
 ## 4. 架构速览
 
 四层（详见 `docs/ARCHITECTURE.md`）：
@@ -81,7 +96,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 │  · 统计                                       │                     │
 │  · 构建                                       │                     │
 ├──────────┴─────────────────────────────────────┴───────────────────┤
-│ 内容区：每个 page 一个 Grid（搜索 + 工具栏 + 表头 + ListView + 空态） │ ← 7 个 Grid 用 Visibility 互斥
+│ 内容区：每个 page 一个 Grid（搜索 + 工具栏 + 表头 + ListView + 空态） │ ← 6 个 Grid 用 Visibility 互斥
 ├────────────────────────────────────────────────────────────────────┤
 │ 日志抽屉把手 (Auto, Ctrl+L 切换)                                    │ ← FontIcon E70E/E70D 切
 │ 日志抽屉面板 (Auto, 230px) ← `Background="{ThemeResource LogPaneBg}"` │
@@ -102,7 +117,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 | `MetricCardStyle` | 统计页指标卡 | `TargetType="Border"`，统一圆角 6 / 描边 1 / Padding 14,10 |
 | `KvRowStyle` | 详情面板键值行 | `TargetType="Grid"`，只接管 margin / padding / spacing；**列定义必须在使用处显式声明**（`Style` 的 `Setter` 不能加 `ColumnDefinitions`） |
 
-**WinUI 3 无内置 DataGrid**：数据列表统一用 `ListView` + `DataTemplate` + 内嵌 `Grid`，**表头行和项模板必须使用同一套 `ColumnDefinition` 集合**（例如容器页 `1.3* / 1.6* / 120 / 1.2* / 110 / 104`），列才能对齐。本项目刻意不引 CommunityToolkit DataGrid 避免重包与版本耦合。
+**WinUI 3 无内置 DataGrid**：数据列表统一用 `ListView` + `DataTemplate` + 内嵌 `Grid`，**表头行和项模板必须使用同一套 `ColumnDefinition` 集合**（例如容器页 7 列 `1.3* / 1.6* / 100 / 1.1* / 92 / 92 / *` = 名称 / 镜像 / 状态 / 端口 / 卷 / CPU / 创建），列才能对齐。本项目刻意不引 CommunityToolkit DataGrid 避免重包与版本耦合。
 
 ### `MainWindow.xaml` 25 处 kv 行布局（关键修复记录）
 
@@ -130,7 +145,7 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 - `GetSessionAsync` → 建 `SessionSettings` + `Session.Start()`（信号量单例保护）。
 - `PullImageAsync` → 带 `IProgress<(Status,Current,Total)>` 进度回调。
 - `RunAndCaptureAsync` → `CreateContainer` + 订阅 `Process` 的 `OutputReceived/ErrorReceived/Exited` 事件流，捕获 stdout/stderr。
-- `ListImagesAsync` → `Session.GetImages()`（纯 SDK，映射 `Name`/`Sha256`→`Digest`/`Size`/`CreatedTimestamp`；**只有 SDK 侧镜像有完整 sha256**，CLI 侧镜像 `Digest` 留空、详情面板显示「—」，不用假数据填充）。
+- `ListImagesAsync` → `Session.GetImages()` **与 `wslc images` 两个命名空间的合并去重**（二者互不可见，只取其一都会漏）。SDK 侧能拿到完整 `Sha256` → `Digest`；CLI 侧只有短 IMAGE ID 与截断的 SIZE，**`Digest` 留空、详情面板显示「—」，不用假数据填充**。
 - `Dispose` → 终止 Session。
 
 **容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
@@ -147,13 +162,13 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 **网络 / 卷（network / volume）—— 已实现，整组走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 2.9.9 的 C# 投影**完全没有** network / volume 资源类型，因此这组与容器列举/启停一样属于"SDK 无投影 → CLI 桥接"的路径。
-- `ListNetworksAsync`：`wslc network ls`（JSON 优先，失败回退 docker 风格表格：`NETWORK ID | NAME | DRIVER | SCOPE` 取 NAME/DRIVER/SCOPE）。
+- `ListNetworksAsync`：`wslc network ls`（走**表格解析**，非 JSON：表头 `NETWORK ID | NAME | DRIVER | SCOPE` 取 NAME/DRIVER/SCOPE）。
 - `CreateNetworkAsync(name)`：`wslc network create <name>`，空名抛 `ArgumentException`，非零退出抛 `InvalidOperationException`。
 - `RemoveNetworkAsync(name)`：`wslc network remove <name>`，非零退出抛异常。
-- `ListVolumesAsync`：`wslc volume ls`（JSON 优先，失败回退 docker 风格表格：`DRIVER | VOLUME NAME` 取 DRIVER/NAME）。
+- `ListVolumesAsync`：`wslc volume ls --format json`（**必须走 JSON**，无表格回退：Mountpoint 列只在 JSON 里存在）。
 - `CreateVolumeAsync(name)`：`wslc volume create <name>`，空名抛 `ArgumentException`，非零退出抛异常。
 - `RemoveVolumeAsync(name)`：`wslc volume remove <name>`，非零退出抛异常。
-- 解析器尚未在真实 wslc 上联调，首次仅核对输出**列格式**（`network ls` / `volume ls` 子命令必然存在，JSON 不可用会自动回退表格解析，无需怀疑标志）。
+- 解析器已在真实 wslc 上联调（verify V2.1~V2.5，2026-09-10 复验 PASS），并有夹具驱动的回归测试：`tests/wslcUI.Tests/Services/TableParserTests.cs`（真机输出原文 + 构造对齐行，覆盖列宽推导 / 中英文表头 / 短行补空 / 末列溢出折叠 / 缺列降级 / 大小写敏感）。
 - UI 已接：MainWindow 用 `NavigationView` 三栏布局（侧栏 220px 容器/镜像/网络/卷/分隔/统计/构建 / 内容 `*` / 详情面板 340px 可关），网络页与卷页各含"名称输入框 + 创建 + 删除"面板，绑定 `NewNetworkName`/`NewVolumeName` 与对应命令。
 
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
@@ -187,22 +202,26 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 
 ## 6. 关键约束与坑
 
-- **API 优先，但容器列举/启停 + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像列举/拉取/运行等 SDK 覆盖的操作继续走 SDK；容器列举/`start`/`stop`/`rm`/`logs`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
-- **CLI 必然支持所有已桥接的子命令**（`wslc list/start/stop/rm/logs`、`image rm`、`network`/`volume` 全套、`stats`、`build`、`exec -it`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令是否存在"列为风险** —— 联调时只需核对输出**列格式**，退出码语义（非零抛异常）已就位。
+- **API 优先，但容器列举/启停/删除/日志/inspect + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec / attach) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像拉取/运行等 SDK 覆盖的操作继续走 SDK（镜像列举是 SDK + CLI 合并去重）；容器列举/`start`/`stop`/`rm`/`logs`/`inspect`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` / `attach` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
+- **CLI 必然支持所有已桥接的子命令**（`wslc list/start/stop/rm/logs/inspect`、`image rm`、`network`/`volume` 全套、`stats`、`build`、`exec -it`、`attach`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令是否存在"列为风险** —— 联调时只需核对输出**列格式**，退出码语义（非零抛异常）已就位。
 - **`--format json` 不可靠**：wslc 2.9.9 不同子命令的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期"JSON 优先回退表格"的代码在真实环境静默返回空列表。**统一走按表头推导列宽的表格解析**（`WslcCli.SplitByColumns` / `ComputeColumnBoundaries` / `FindColumn`）。**例外**：`volume ls --format json`（Mountpoint 列只在 JSON 里）和 `inspect <name> --format json`（Mounts 嵌套数组在表格里完全不可见）必须走 JSON；这是因为相关列/字段**不存在于表格里**，不是 JSON 形态问题。
 - **wslc stats 不接受 docker 标志**：`--no-stream` / `-f` 之类都会报"选项名称未被识别"——wslc 默认就是一次性快照，**不要**在 stats 里传 `--no-stream`。
 - **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.9**（与 wslc 2.9.9.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
 - **已核对过的关键 SDK 成员名（2.9.9，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)，并用独立控制台项目对 2.9.9 包做编译验证）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。**⚠️ 2.9.9 的 `InitProcess.OutputReceived`/`ErrorReceived` 回调参数是 `byte[]`（2.9.3/2.9.4 是 `IBuffer`）**：`WslcSdkClient.cs` 里的 `data.ToArray()` 写法两态兼容（`IBuffer` 走 WinRT 扩展、`byte[]` 走 LINQ），无需改；若日后清理可改为直接 `Encoding.UTF8.GetString(data)`。
 - **⚠️ 命名空间隔离（2.9.9 实测结论，改代码前必读）**：SDK `Session`（storagePath，如 `%LOCALAPPDATA%\wslcUI\session`）与 `wslc` CLI（WSL2 rootfs / 默认会话）**互不可见**。实测：SDK 拉的镜像、建的容器，`wslc list -a` / `wslc images` 都看不到；反之 CLI 的容器 `Session.OpenContainer` 也打不开。因此：容器列举/启停/删除/日志的 CLI 桥接**不可**迁移到 SDK（UI 管理的是 CLI 命名空间容器）；`Session.OpenContainer(name, mode)` 只能操作 SDK 会话自己 `CreateContainer` 的容器（2.9.9 新增，已实测：可打开、`Stop(Signal, TimeSpan)`、`Delete(Force)` 可用，但 **Stop 后不能 Start**，抛 `InvalidOperationException`）。
 - **2.9.9 SDK 相对 2.9.3 的新 API（反射 diff + 实测）**：`Session.OpenContainer(name, mode)`、`Session.DeleteImage(nameOrId)`、`PushImage(Async)`+`PushImageOptions`、`TagImage`+`TagImageOptions`、`ImportImage(Async)(path, name)`、`LoadImage(Async)(path)`、`CreateVhdVolume`/`DeleteVhdVolume`、`Authenticate(Uri,user,pass)`、事件 `Terminated`/`ProcessCrashed`。**其中只有镜像删除被 wslcUI 采用**：`DeleteImageAsync` 现在是命名空间感知的 —— reference 命中 `Session.GetImages()`（忽略大小写）则 `Session.DeleteImage`，否则回退 `wslc image rm`（修复了"SDK 镜像 UI 可见但删不掉"的 bug）。其余新 API 因命名空间分裂、UI 合并列表下对 CLI 镜像无意义而暂未接入（Tag/Push/Import/Load 如需接入，需在 UI 上区分镜像来源或只对 SDK 镜像开放）。
-- **待在真实 wslc 上联调（只核对输出格式，不怀疑子命令/标志是否存在）**：`WslcCli` 各解析器（`ParseList`/`ParseNetworkList`/`ParseVolumeList`/`ParseStats`）的**输出列格式**；`wslc start/stop <name>` 的退出码语义（非零抛异常已就位）。
+- **CLI 解析器已联调并有回归保护**：`WslcCli` 各解析器（`ParseContainerList` / `ParseNetworkList` / `ParseVolumeListJson` / `ParseStats` / `ParseImageList`）的真机输出列格式已核对（verify V2.1~V2.5），且 `TableParserTests` 以真机输出原文为夹具做单元回归；`wslc start/stop <name>` 非零退出抛异常已就位。
+- **`WslcCli` 的两条约定不要回退**：① `RunAsync` 必须**并发**排空 stdout/stderr（两个 `ReadToEndAsync` 先启动再 `Task.WhenAll`）——串行 `await` 会在子进程写满 stderr 管道缓冲（4 KB）时双向等待死锁；② `ExePath` 走三级解析（环境变量 `WSLCUI_WSLC_EXE` → `C:\Program Files\WSL\wslc.exe` → PATH 扫描），**不要改回硬编码常量**，否则 wslc 装在非默认位置时整组 CLI 桥接失效、且报错文案误导成「请先安装 WSL」。`BuildImageAsync` 与 `RunAsync` 共用 `EnsureExe()` 前置守卫。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
 
-## 7. 建议的下一步
+## 7. 实现进度与剩余项
 
-1. ✅ 容器全生命周期骨架已实现：列表（`wslc list -a`）/ 启停 / 删除（`wslc rm`）/ 日志（`wslc logs`）走 CLI 桥接；镜像列举/拉取/运行走 SDK；镜像删除走 `wslc image rm`。UI 已含镜像输入框+拉取、删除容器/镜像按钮、日志面板。下一步在装有真实 wslc 的 Windows 上联调：核对 `WslcCli` 的 `list` 解析输出格式、`start/stop/rm/logs/image rm` 退出码语义，必要时收紧解析。
-2. 把 `MainViewModel` 的 `Containers` / `Images` 集合接到真实数据，验证 MVVM 绑定链路（双栏列表 + 选中启停/删除 + 日志面板已接好）。
-3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。真机联调已通过：`wslc network create/remove` 退出码 0/非零语义正常，`network ls` 表头 `NETWORK ID / NAME / DRIVER / SCOPE` 与代码期望一致（按列宽解析），`volume ls` 表头 `DRIVER / VOLUME NAME` 同上。
+> 全部主功能已实现（下方 1~6 均为已完成状态）。真正未闭环的只剩 **P1a ConPTY 机器级故障复验**（被动等 Windows 更新），外加 H2 错误码随用随补；详见 `docs/REMAINING-PLAN-2026-08-31.md`。
+
+1. ✅ 容器全生命周期已实现并联调通过：列表（`wslc list -a`）/ 启停 / 删除（`wslc rm`）/ 日志（`wslc logs`）走 CLI 桥接；镜像列举（SDK + CLI 合并去重）/ 拉取 / 运行走 SDK；镜像删除命名空间感知。UI 已含镜像输入框+拉取、删除容器/镜像按钮、日志抽屉。`start/stop/rm/logs/image rm` 退出码语义（非零抛异常）已就位，`list` 输出列格式已用真机原文固化为单测夹具。
+2. ✅ `MainViewModel` 的 `Containers` / `Images` / `Networks` / `Volumes` / `Stats` 集合均已接真实数据，MVVM 链路（列表 + 选中启停/删除 + 详情面板 + 日志抽屉）已接通；`IWslcClient` 的 Fake / SDK 实现可一行切换（`App.xaml.cs`）。
+3. ✅ network / volume CRUD 已实现，整组走 `wslc` CLI 桥接（同 `IWslcClient`）。真机联调已通过：`wslc network create/remove` 退出码 0/非零语义正常，`network ls` 表头 `NETWORK ID / NAME / DRIVER / SCOPE` 与代码期望一致（按列宽解析）；`volume ls` **走 `--format json`**（Mountpoint 列只在 JSON 里，无表格回退），解析器 `ParseVolumeListJson`。
 4. ✅ 资源监控 stats 已实现，走 `wslc stats` CLI 桥接（`WslcCli.ParseStats` + 取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。真机联调已通过：表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽正确切片。**注意**：wslc 不接受 `--no-stream`，默认就是一次性快照。
 5. ✅ 镜像构建 + 交互式终端均已实现（`wslc build -t` CLI 桥接 / `wslc exec -it` + ConPTY + XTerm.NET cell 渲染）。CLI 侧已真机验证（verify 工具 9/9，见 `tools/wslcUI.Verify`）；ConPTY 侧 lpValue bug 已修（`aa35cac`），**视觉验收卡在本机系统级 ConPTY 故障**（见第 5 节交互式终端段），待 Windows 更新后复验。
-6. ~~attach 到已运行进程~~ ✅ 已完成（见第 5 节路线图）；~~错误码映射表~~ ✅ 官方码全集已核对入库（2026-09-04）：`WslcCli.ErrorHints` 现覆盖 wslcsdk.h 全部 15 个 `WSLC_E_*`（0x8004_0601..060F，经 docs.rs/wslc-sys 与 wsl.dev C# `Error` 枚举双重核对）+ 4 个 WinRT/COM 标准 HRESULT；**修正过一处码名 bug**（`WSLC_E_CONTAINER_RUNNING` → 官方名 `WSLC_E_CONTAINER_IS_RUNNING`，旧条目永不命中）。`TranslateCliError` 未命中码会 `Debug.WriteLine` 留痕——H2 之后的"随用随补"以此信号为准。`*_IN_USE` 三码官方清单未收录（惯例预置，真机观测后校正）。终端增强剩余：P1a ConPTY 复验闭环（一条命令，见 `docs/REMAINING-PLAN-2026-08-31.md`）；输入侧升级 `Terminal.GenerateKeyInput`。
+6. ~~attach 到已运行进程~~ ✅ 已完成（见第 5 节路线图）；~~错误码映射表~~ ✅ 官方码全集已核对入库（2026-09-04）：`WslcCli.ErrorHints` 现覆盖 wslcsdk.h 全部 15 个 `WSLC_E_*`（0x8004_0601..060F，经 docs.rs/wslc-sys 与 wsl.dev C# `Error` 枚举双重核对）+ 4 个 WinRT/COM 标准 HRESULT；**修正过一处码名 bug**（`WSLC_E_CONTAINER_RUNNING` → 官方名 `WSLC_E_CONTAINER_IS_RUNNING`，旧条目永不命中）。`TranslateCliError` 未命中码会 `Debug.WriteLine` 留痕——H2 之后的"随用随补"以此信号为准。`*_IN_USE` 三码官方清单未收录（惯例预置，真机观测后校正）；~~真键盘事件转发~~ ✅ 已完成（R4，见第 5 节）。
+   **剩余唯一未闭环项 = P1a**（本机 ConPTY 机器级故障复验，一条命令，被动等 Windows 更新，见 `docs/REMAINING-PLAN-2026-08-31.md`）。

@@ -39,12 +39,30 @@ public sealed class TerminalView : Panel
             throw new InvalidOperationException("TerminalView 已绑定终端实例。");
         _terminal = terminal;
         RebuildRowPool();
+        // 订阅与 Loaded/Unloaded 成对：控件可能被卸载后**重新加载**（XAML 树
+        // 重建 / 父容器切换）。此前 Unloaded 解绑后 Loaded 只调 Render() 不重绑，
+        // 二次加载后 BufferChanged 再无订阅者 → _dirty 永不置位 → 画面冻结。
         _terminal.BufferChanged += OnBufferChanged;
-        Loaded += (_, _) => Render();
-        Unloaded += (_, _) => _terminal.BufferChanged -= OnBufferChanged;
+        Loaded += OnViewLoaded;
+        Unloaded += OnViewUnloaded;
         SizeChanged += (_, _) => InvalidateMeasure();
         Render();
     }
+
+    private void OnViewLoaded(object sender, RoutedEventArgs e)
+    {
+        var terminal = _terminal;
+        if (terminal is null) return;
+        // 幂等订阅：Setup 已订阅过一次，先解绑再绑，避免重复回调。
+        terminal.BufferChanged -= OnBufferChanged;
+        terminal.BufferChanged += OnBufferChanged;
+        // 卸载期间 PTY 可能已写入新内容 —— 强制一次全量重绘追平。
+        _dirty = true;
+        Render();
+    }
+
+    private void OnViewUnloaded(object sender, RoutedEventArgs e) =>
+        _terminal?.BufferChanged -= OnBufferChanged;
 
     /// <summary>当前绑定的终端（未绑定为 null）。</summary>
     public XTerm.Terminal? Terminal => _terminal;

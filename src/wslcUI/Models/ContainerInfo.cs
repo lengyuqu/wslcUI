@@ -146,8 +146,6 @@ public class ContainerInfo : INotifyPropertyChanged
         }
     }
 
-    private static string FirstLabel(ContainerMount m) => m.Head;
-
     /// <summary>
     /// 详情面板运行信息区挂载行单元格（与端口并列，"镜像 / 端口 / 卷 / 创建 / ID / 状态原文"）。
     /// 同上：未查 → "—"，已查空 → "—"，否则按 MountListCell 压缩逻辑。

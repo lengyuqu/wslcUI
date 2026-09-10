@@ -7,13 +7,13 @@
 选择 SDK 直接调用,可**省掉整层「进程封装 + stdout 解析 + 重试 + 流式读取」**,
 且接口变更在编译期即可发现,而非运行时崩在字符串解析上。
 
-> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志，网络 / 卷整套 CRUD，以及资源监控 stats）**：wslc 2.9.9 的 C# 投影**没有**
+> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志 / inspect，网络 / 卷整套 CRUD，资源监控 stats，镜像构建，交互式终端）**：wslc 2.9.9 的 C# 投影**没有**
 > `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见
-> [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影，也没有 stats / 资源监控端点**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志"、
-> 以及"网络/卷的创建、列举、删除"，还有"资源使用快照"在纯 SDK 下都做不到。这部分在 `WslcCli.cs` 里桥接
-> `wslc list -a` / `wslc start` / `wslc stop` / `wslc rm` / `wslc image rm` / `wslc logs`
+> [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影，也没有 stats 端点、没有 Dockerfile 构建投影、没有 inspect 投影**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志 / 读挂载"、
+> 以及"网络/卷的创建、列举、删除"，还有"资源使用快照 / 镜像构建 / 交互式终端"在纯 SDK 下都做不到。这部分在 `WslcCli.cs` 里桥接
+> `wslc list -a` / `wslc start` / `wslc stop` / `wslc rm` / `wslc image rm` / `wslc logs` / `wslc inspect <name> --format json`
 > 以及 `wslc network create|ls|remove` / `wslc volume create|ls|remove` / `wslc stats`
-> 以及 `wslc build -t <tag> <context>`（镜像构建）/ `wslc exec -it <name> /bin/sh`（交互式终端，经 ConPTY 真 TTY）。
+> 以及 `wslc build -t <tag> <context>`（镜像构建）/ `wslc exec -it <name> /bin/sh` 与 `wslc attach <name>`（交互式终端，经 ConPTY 真 TTY）。
 > 属于对"API 优先"的有据例外，不是退回到"用 CLI 封装一切"。
 
 SDK 对象模型(Microsoft.WSL.Containers):
@@ -56,8 +56,9 @@ ViewModel **只依赖 `IWslcClient` 接口**,不感知具体后端。好处:
 
 - 真实后端用 `WslcSdkClient`(生产)。
 - 没装 WSL 时用 `FakeWslcClient` 跑通整个 XAML/ViewModel 流程。
-- 未来若 `stats` 监控、`build`、`exec` 在 SDK 里缺失,可单独为其写 CLI 适配器
-  实现同一接口,UI 无感(network/volume/build/exec 已用此模式桥接)。
+- SDK 无投影的能力（容器列举 / 启停 / 删除 / 日志 / inspect，network / volume CRUD，
+  stats，build，exec / attach）统一由 `WslcCli.cs` 这一个 CLI 适配器补齐同一接口，
+  UI 完全无感——后续新增缺口只需在 `WslcCli` 加方法、在 `WslcSdkClient` 转发。
 
 切换只改 `App.xaml.cs` 一行注册:
 ```csharp
@@ -74,7 +75,7 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 镜像列举 | ✅ 已实现 | `Session.GetImages()`（纯 SDK） |
+| 镜像列举 | ✅ SDK + CLI 合并 | `Session.GetImages()`（SDK 自身命名空间）+ `wslc images`（CLI 命名空间），按镜像 ID 去重合并——两者互不可见，只取其一都会漏（详见 `WslcSdkClient.ListImagesAsync`） |
 | 容器列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 `Session.GetContainers()`，改走 `wslc list -a`（`WslcCli.cs`） |
 | 启停(按名) | ✅ 已用 CLI 桥接 | SDK 无 `GetContainer(name)`，走 `wslc start/stop <name>` |
 | 删除容器 | ✅ 已用 CLI 桥接 | 走 `wslc rm <name>` |
@@ -82,14 +83,34 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 | 容器日志 | ✅ 已用 CLI 桥接 | 走 `wslc logs <name>`（非 `-f` 跟随） |
 | 网络列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 network 投影，走 `wslc network ls`（`WslcCli.ParseNetworkList`） |
 | 网络创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc network create/remove <name>` |
-| 卷列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 volume 投影，走 `wslc volume ls`（`WslcCli.ParseVolumeList`） |
+| 卷列举 | ✅ 已用 CLI 桥接 | 2.9.9 SDK 无 volume 投影，走 `wslc volume ls --format json`（`WslcCli.ParseVolumeListJson`）。**此路径刻意不做表格回退**——Mountpoint 列只存在于 JSON 输出里 |
 | 卷创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc volume create/remove <name>` |
 | 资源监控 (stats) | ✅ 已用 CLI 桥接 | 走 `wslc stats`（`WslcCli.ParseStats`，按表头推导列宽解析；取消即杀进程安全网 + 独立 `RefreshStatsCommand`） |
 | 镜像构建 (wslc build -t) | ✅ 已用 CLI 桥接 | 走 `wslc build -t <tag> <context>`，`OutputDataReceived` 流式回传（SDK 无 Dockerfile 构建投影） |
-| 交互式终端 (exec -it + ConPTY) | ✅ 已实现 | 走 `wslc exec -it <name> /bin/sh`，经 `Services/ConPty.cs` 的 Windows Pseudoconsole P/Invoke 给容器真 TTY；独立 `TerminalWindow` 渲染（去 ANSI 转义） |
+| 容器 inspect（挂载关联） | ✅ 已用 CLI 桥接 | `wslc inspect <name> --format json` 取 `Mounts[]`（表格里完全不可见，必须走 JSON）。容器被选中时**按需**异步拉取而非并入 Refresh，避免 N+1；有独立取消源防快速切换选中导致的陈旧回填 |
+| 交互式终端 (exec / attach + ConPTY) | ✅ 已实现 | `wslc exec -it <name> /bin/sh`（在容器内起新进程）或 `wslc attach <name>`（附加到运行中容器的现有前台进程），经 `Services/ConPty.cs` 的 Windows Pseudoconsole P/Invoke 给容器真 TTY。渲染是 **XTerm.NET（VT 解析 + cell 缓冲）+ 自研 WinUI 渲染层**（`Terminal/TerminalView.cs`），输入是真键盘转发（`Terminal/TerminalInputMapper.cs`），**不是** R1 的「去 ANSI 转义文本」MVP；选型依据见 `docs/TERMINAL-RENDER-DECISION.md` |
 
 ## 6. 预览风险
 
 SDK 与 wslc 同为预览,GA 预计 2026 年秋。本仓库已锁定
 `Microsoft.WSL.Containers` **2.9.9**。GA 前的破坏性变更需重编译适配;
 建议升级时先比对 [wsl.dev/api-reference/csharp](https://wsl.dev/api-reference/csharp/)。
+
+## 7. 质量门与验证
+
+每次改动按顺序全过才算完成：
+
+| 命令 | 期望 |
+|------|------|
+| `dotnet build wslcUI.sln -c Debug` | 0 错误 0 警告（含 tools 下的 ConPtyProbe / wslcUI.Verify） |
+| `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release` | 0 错误 0 警告 |
+| `dotnet test tests/wslcUI.Tests/wslcUI.Tests.csproj -p:Platform=x64 -c Debug` | 全部通过 |
+| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 9 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
+
+- **单元测试**覆盖：CLI 表格与 JSON 解析器（`Services/TableParserTests.cs`，以真机
+  `wslc` 输出原文为夹具）、错误码中文映射、用户设置持久化、卷→容器反转映射、
+  终端键盘映射、VT 转义剥离、XTerm 集成、ConPTY 健康预检。
+- **真机 verify** 覆盖：CLI 输出编码与五个表格解析器（行数零偏差）、失败上浮、
+  `ArgumentList` 参数整体性、ConPTY 创建/交互/跨块 UTF-8、SDK 取消清理链。
+  它经 `InternalsVisibleTo` 直接调用仓库内真实代码路径，而非逻辑副本。
+- **环境前置检查**：`powershell -ExecutionPolicy Bypass -File scripts\verify-env.ps1`。

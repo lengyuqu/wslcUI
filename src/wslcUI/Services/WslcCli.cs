@@ -42,10 +42,71 @@ namespace wslcUI.Services;
 /// </summary>
 internal static class WslcCli
 {
-    private const string Exe = @"C:\Program Files\WSL\wslc.exe";
+    /// <summary>wslc.exe 的默认安装位置（`wsl --install` 的落点）。</summary>
+    private const string DefaultExe = @"C:\Program Files\WSL\wslc.exe";
 
-    /// <summary>Absolute path to wslc.exe (also consumed by the terminal).</summary>
-    public static string ExePath => Exe;
+    /// <summary>覆盖 wslc.exe 路径的环境变量（非默认安装位置 / 免安装版 / 测试用）。</summary>
+    internal const string ExeEnvVar = "WSLCUI_WSLC_EXE";
+
+    // 进程内解析一次即可（PATH/环境变量在一次会话里不会变）。
+    private static readonly Lazy<string> _exePath =
+        new(ResolveExePath, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    /// <summary>
+    /// Absolute path to wslc.exe (also consumed by the terminal).
+    /// 解析顺序：环境变量 <see cref="ExeEnvVar"/> → 默认安装路径 → PATH 扫描。
+    /// 三级全落空时返回默认路径，交由 <see cref="EnsureExe"/> 抛出带完整查找范围的错误。
+    /// </summary>
+    public static string ExePath => _exePath.Value;
+
+    /// <summary>
+    /// 三级路径解析（不读缓存，便于单测）。硬编码 `C:\Program Files\WSL\wslc.exe`
+    /// 会让装在别的盘/别的目录的机器整组 CLI 桥接功能失效，且错误文案误导成
+    /// 「请先安装 WSL」——这里补齐 PATH 回退，并允许环境变量显式指定。
+    /// </summary>
+    internal static string ResolveExePath()
+    {
+        var overridePath = Environment.GetEnvironmentVariable(ExeEnvVar);
+        if (!string.IsNullOrWhiteSpace(overridePath) && File.Exists(overridePath))
+            return overridePath;
+
+        if (File.Exists(DefaultExe)) return DefaultExe;
+
+        var pathVar = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrEmpty(pathVar))
+        {
+            foreach (var dir in pathVar.Split(Path.PathSeparator))
+            {
+                if (string.IsNullOrWhiteSpace(dir)) continue;
+                try
+                {
+                    // PATH 条目可能带引号（"C:\Program Files\X"），先剥壳。
+                    var candidate = Path.Combine(dir.Trim().Trim('"'), "wslc.exe");
+                    if (File.Exists(candidate)) return candidate;
+                }
+                catch (ArgumentException)
+                {
+                    // PATH 里含非法路径字符的条目：跳过，不影响其余条目。
+                }
+            }
+        }
+
+        return DefaultExe;
+    }
+
+    /// <summary>
+    /// 所有 CLI 调用（含 <see cref="BuildImageAsync"/>）的统一前置守卫。
+    /// 不守卫的话 Process.Start 会抛裸 Win32Exception（"系统找不到指定的文件"），
+    /// 既没有可操作的下一步建议，也命中不了 <see cref="TranslateCliError"/> 的映射表。
+    /// </summary>
+    private static void EnsureExe()
+    {
+        if (File.Exists(ExePath)) return;
+        throw new FileNotFoundException(
+            $"未找到 wslc.exe。已查找：环境变量 {ExeEnvVar}、默认路径 {DefaultExe}、PATH。" +
+            "请先安装 WSL 容器组件（wsl --install），或用该环境变量指定 wslc.exe 的位置。",
+            ExePath);
+    }
 
     public static async Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct)
     {
@@ -101,10 +162,11 @@ internal static class WslcCli
         if (!File.Exists(Path.Combine(contextDir, "Dockerfile")) &&
             !File.Exists(Path.Combine(contextDir, "Containerfile")))
             throw new FileNotFoundException("上下文中未找到 Dockerfile / Containerfile。", contextDir);
+        EnsureExe();
 
         var psi = new ProcessStartInfo
         {
-            FileName = Exe,
+            FileName = ExePath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -256,12 +318,11 @@ internal static class WslcCli
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
         string[] args, CancellationToken ct)
     {
-        if (!File.Exists(Exe))
-            throw new FileNotFoundException("未找到 wslc.exe，请先安装 WSL 容器组件 (wsl --install)。", Exe);
+        EnsureExe();
 
         var psi = new ProcessStartInfo
         {
-            FileName = Exe,
+            FileName = ExePath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -289,10 +350,15 @@ internal static class WslcCli
             try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
         });
 
-        var stdout = await proc.StandardOutput.ReadToEndAsync(ct).ConfigureAwait(false);
-        var stderr = await proc.StandardError.ReadToEndAsync(ct).ConfigureAwait(false);
+        // 两个流必须**并发**排空：串行 await（先 stdout 再 stderr）时，子进程若在
+        // stdout 结束前写满 stderr 的管道缓冲（默认 4 KB）就会阻塞在写侧，stdout
+        // 随之永不 EOF —— 双向等待，永久挂起。wslc 报错时 stderr 常带完整错误码与
+        // 上下文（WSL 未安装的引导文案尤其长），超过 4 KB 完全可能。
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
         await proc.WaitForExitAsync(ct).ConfigureAwait(false);
-        return (proc.ExitCode, stdout, stderr);
+        return (proc.ExitCode, stdoutTask.Result, stderrTask.Result);
     }
 
     /// <summary>
@@ -400,19 +466,20 @@ internal static class WslcCli
     // ====================================================================
 
     /// <summary>
-    /// Splits a fixed-width row by column boundaries derived from <paramref
-    /// name="headerLine"/>. Returns the trimmed cell list, one per header
-    /// column. If the row is shorter than the header (last column), the
-    /// missing tail is returned as empty strings. If the row is longer
-    /// (a value spanning more characters than the column was padded for),
-    /// the spillover is folded back into the LAST cell — we never lose
+    /// Splits a fixed-width row by column boundaries derived from the header
+    /// line (see <see cref="ComputeColumnBoundaries"/>). Returns the trimmed
+    /// cell list, one per header column. If the row is shorter than the header
+    /// (last column), the missing tail is returned as empty strings. If the row
+    /// is longer (a value spanning more characters than the column was padded
+    /// for), the spillover is folded back into the LAST cell — we never lose
     /// data, only perfect column alignment.
     /// </summary>
     /// <param name="boundaries">
     /// Per-column start offsets in the header line. The end of column <c>i</c>
     /// is <c>boundaries[i+1]</c> (or the header length for the last column).
     /// </param>
-    private static List<string> SplitByColumns(int[] boundaries, string headerLen, string row)
+    /// <param name="row">The data line to slice. Leading/trailing padding of each cell is trimmed.</param>
+    internal static List<string> SplitByColumns(int[] boundaries, string row)
     {
         var cells = new List<string>(boundaries.Length);
         for (int i = 0; i < boundaries.Length - 1; i++)
@@ -443,7 +510,7 @@ internal static class WslcCli
     /// element equal to the header length (so callers can write
     /// <c>boundaries[i] .. boundaries[i+1]</c> for each column).
     /// </summary>
-    private static int[]? ComputeColumnBoundaries(string headerLine)
+    internal static int[]? ComputeColumnBoundaries(string headerLine)
     {
         var cells = Regex.Split(headerLine.TrimEnd('\r', '\n'), @"[ ]{2,}");
         if (cells.Length == 0 || cells[0].Length == 0) return null;
@@ -469,7 +536,7 @@ internal static class WslcCli
     /// (case-sensitive). Returns -1 if no such column exists. Use this to make
     /// parsers resilient to column reordering.
     /// </summary>
-    private static int FindColumn(int[] boundaries, string headerLine, string needle)
+    internal static int FindColumn(int[] boundaries, string headerLine, string needle)
     {
         for (int i = 0; i < boundaries.Length - 1; i++)
         {
@@ -488,7 +555,7 @@ internal static class WslcCli
     /// (zh-CN locale). Same column order as docker: ID | NAME | IMAGE |
     /// CREATED | STATUS | PORTS, but column CAPTIONS differ.
     /// </summary>
-    private static IReadOnlyList<ContainerInfo> ParseContainerList(string output)
+    internal static IReadOnlyList<ContainerInfo> ParseContainerList(string output)
     {
         var result = new List<ContainerInfo>();
         var lines = output.Split('\n');
@@ -529,7 +596,7 @@ internal static class WslcCli
         {
             var line = lines[i].TrimEnd('\r');
             if (line.Length == 0) continue;
-            var cells = SplitByColumns(boundaries, headerLine, line);
+            var cells = SplitByColumns(boundaries, line);
             if (cells.Count <= idIdx || cells.Count <= nameIdx || cells.Count <= imgIdx) continue;
             var id = cells[idIdx];
             if (id.Length == 0) continue;
@@ -552,7 +619,7 @@ internal static class WslcCli
     /// Parses <c>wslc network ls</c> output. Real header on wslc 2.9.9.0:
     /// <c>NETWORK ID   NAME      DRIVER      SCOPE</c>
     /// </summary>
-    private static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
+    internal static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
     {
         var result = new List<NetworkInfo>();
         var (headerLine, boundaries, headerIdx) = LocateHeader(output);
@@ -568,7 +635,7 @@ internal static class WslcCli
         {
             var line = lines[i].TrimEnd('\r');
             if (line.Length == 0) continue;
-            var cells = SplitByColumns(boundaries, headerLine, line);
+            var cells = SplitByColumns(boundaries, line);
             if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
             result.Add(new NetworkInfo
             {
@@ -630,7 +697,7 @@ internal static class WslcCli
     ///   网络 I/O   块 I/O   PIDS</c>. <c>stats</c> defaults to running
     /// containers only; if there are none, wslc prints an empty table.
     /// </summary>
-    private static IReadOnlyList<StatInfo> ParseStats(string output)
+    internal static IReadOnlyList<StatInfo> ParseStats(string output)
     {
         var result = new List<StatInfo>();
         var (headerLine, boundaries, headerIdx) = LocateHeader(output);
@@ -656,7 +723,7 @@ internal static class WslcCli
         {
             var line = lines[i].TrimEnd('\r');
             if (line.Length == 0) continue;
-            var cells = SplitByColumns(boundaries, headerLine, line);
+            var cells = SplitByColumns(boundaries, line);
             if (cells.Count <= nameIdx || cells[nameIdx].Length == 0) continue;
             result.Add(new StatInfo
             {
@@ -680,7 +747,7 @@ internal static class WslcCli
     /// <c>wslc inspect &lt;id&gt;</c> per image. The CLI's
     /// <c>--format json</c> is not used here (see class doc).
     /// </summary>
-    private static IReadOnlyList<ImageInfo> ParseImageList(string output)
+    internal static IReadOnlyList<ImageInfo> ParseImageList(string output)
     {
         var result = new List<ImageInfo>();
         var (headerLine, boundaries, headerIdx) = LocateHeader(output);
@@ -697,7 +764,7 @@ internal static class WslcCli
         {
             var line = lines[i].TrimEnd('\r');
             if (line.Length == 0) continue;
-            var cells = SplitByColumns(boundaries, headerLine, line);
+            var cells = SplitByColumns(boundaries, line);
             if (cells.Count <= idIdx || cells[idIdx].Length == 0) continue;
             var id = cells[idIdx];
             if (id.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
@@ -719,7 +786,7 @@ internal static class WslcCli
     /// returns its text + boundaries + index. Returns (null, _, -1) if no
     /// header is found.
     /// </summary>
-    private static (string? Header, int[] Boundaries, int HeaderIndex) LocateHeader(string output)
+    internal static (string? Header, int[] Boundaries, int HeaderIndex) LocateHeader(string output)
     {
         var lines = output.Split('\n');
         for (int i = 0; i < lines.Length; i++)
