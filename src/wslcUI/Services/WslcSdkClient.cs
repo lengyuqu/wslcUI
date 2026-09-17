@@ -30,6 +30,7 @@ namespace wslcUI.Services;
 ///   - ListContainersAsync  ← `wslc list -a`
 ///   - StartAsync(name)      ← `wslc start &lt;name&gt;`
 ///   - StopAsync(name)       ← `wslc stop &lt;name&gt;`
+///   - RestartAsync(name)    ← `wslc restart &lt;name&gt;`（wslc 2.9.12+；SDK 无 C# 投影）
 ///   - DeleteContainerAsync  ← `wslc rm &lt;name&gt;`
 ///   - DeleteImageAsync      ← Session.DeleteImage (session images, 2.9.9) / `wslc image rm` (CLI images)
 ///   - BuildImageAsync       ← `wslc build -t &lt;tag&gt; &lt;context&gt;`
@@ -189,6 +190,9 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
 
     public Task StopAsync(string name, CancellationToken ct = default) =>
         WslcCli.StopAsync(name, ct);
+
+    public Task RestartAsync(string name, CancellationToken ct = default) =>
+        WslcCli.RestartAsync(name, ct);
 
     // SDK gap → CLI bridge (see WslcCli.cs).
     public Task DeleteContainerAsync(string name, CancellationToken ct = default) =>

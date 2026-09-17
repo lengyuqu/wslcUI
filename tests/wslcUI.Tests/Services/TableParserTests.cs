@@ -33,6 +33,15 @@ public class TableParserTests
         "容器 ID          名称        映像            已创建     状态            端口\n" +
         "20f2ed8f095c   wslc-pg   postgres:16   10 天前   exited 9 天前   \n";
 
+    /// <summary>
+    /// `wslc list -a`（wslc 2.9.11.0，2026-09-11 抓取）：docker 对齐格式（#41375）——
+    /// NAME 列改名 NAMES 且移到行尾、IMAGE 后插入 COMMAND 列、状态文案改为
+    /// docker 风格 `Exited (0) 10 days ago`。端口列为空。
+    /// </summary>
+    private const string ListDockerFormatOutput =
+        "容器 ID          映像            COMMAND                  已创建     状态                       端口   NAMES\n" +
+        "20f2ed8f095c   postgres:16   \"docker-entrypoint.s…\"   11 天前   Exited (0) 10 days ago        wslc-pg\n";
+
     /// <summary>`wslc images`（英文表头，3 条）</summary>
     private const string ImagesRealOutput =
         "REPOSITORY   TAG      IMAGE ID       CREATED   SIZE\n" +
@@ -101,6 +110,22 @@ public class TableParserTests
         Assert.Equal("postgres:16", c.Image);
         Assert.Equal("exited 9 天前", c.Status);
         Assert.Equal("10 天前", c.CreatedAt);
+    }
+
+    [Fact]
+    public void ParseContainerList_DockerFormat2911_ParsesNameFromTrailingNamesColumn()
+    {
+        // wslc 2.9.11 docker 对齐表头：名称列 = 行尾 NAMES（不再叫 名称/NAME），
+        // 列序 ID | IMAGE | COMMAND | CREATED | STATUS | PORTS | NAMES。
+        var rows = WslcCli.ParseContainerList(ListDockerFormatOutput);
+
+        var c = Assert.Single(rows);
+        Assert.Equal("20f2ed8f095c", c.Id);
+        Assert.Equal("wslc-pg", c.Name);
+        Assert.Equal("postgres:16", c.Image);
+        Assert.Equal("Exited (0) 10 days ago", c.Status);
+        Assert.Equal("11 天前", c.CreatedAt);
+        Assert.Equal("—", c.Ports);
     }
 
     [Fact]

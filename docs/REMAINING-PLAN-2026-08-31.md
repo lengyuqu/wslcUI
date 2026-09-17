@@ -1,8 +1,8 @@
 # wslcUI 遗留问题修复计划
 
-> 修订日期：2026-09-10 ｜ 覆盖修订版 2（其 P4-R3 已完成，见下表）
-> 基线：`eea9b29` ｜ 环境：WinR9 / Win11 26200.9278 insider / wslc 2.9.9.0
-> 质量门（每批次不变）：`dotnet build` 0 错误 0 警告 + `dotnet test` 全过（当前 134 用例）+ 涉及 CLI/PTY 的批次补跑 verify
+> 修订日期：2026-09-10 ｜ 覆盖修订版 2（其 P4-R3 已完成，见下表）｜ 2026-09-11 增补 S1 ｜ 2026-09-17 S1 复查（runtime 2.9.12）
+> 基线：`eea9b29` ｜ 环境：WinR9 / Win11 26200.9278 insider / wslc 2.9.12.0（runtime）/ SDK 2.9.9
+> 质量门（每批次不变）：`dotnet build` 0 错误 0 警告 + `dotnet test` 全过（当前 135 用例）+ 涉及 CLI/PTY 的批次补跑 verify
 
 ---
 
@@ -29,12 +29,13 @@ R1 交付的两个已知限制在 R3 的处置情况：
 
 ---
 
-## 二、剩余遗留问题（1 项 + 1 项被动）
+## 二、剩余遗留问题（2 项 + 1 项被动）
 
 | 编号 | 问题 | 类型 | 规模 | 前置依赖 |
 |------|------|------|------|----------|
 | P1a | ConPTY 机器级故障复验 | 外部依赖 | — | Windows 更新（被动） |
 | H2 | 错误码映射表持续积累 | 维护 | 小 | 随真机使用触发 |
+| S1 | SDK 升级 `Microsoft.WSL.Containers` 2.9.12+（对齐 wslc runtime） | 外部依赖 | 小 | NuGet 发包（被动） |
 
 > P4-R3 已于 `004fb5b` 交付（XTerm.NET 集成 + `TerminalView` 渲染层 + Resize 三级联动），不再是遗留项。
 
@@ -51,6 +52,14 @@ R1 交付的两个已知限制在 R3 的处置情况：
    预检行 `[预检] ConPTY attach 正常` + V5/V5b/V6/V7 全 PASS 即闭环（验收：**13 PASS / 0 FAIL / 0 NA**）。
 3. 闭环收尾：AGENTS.md 第 5 节标注「ConPTY 已于 build xxxxx 真机验证通过」并删除「未联调」警示；顺带真机验收 XTerm.NET 渲染的彩色输出（`ls --color` / `grep`）。
 4. 可选加速：Insider 反馈中心提交复现（材料已在 `3b0f40a` commit message + 修复报告）；或尝试 `DISM /Online /Cleanup-Image /RestoreHealth`。
+
+### S1：SDK 升级对齐 wslc runtime（被动等待，2026-09-11 记录 / 2026-09-17 复查）
+
+**现状**：wslc runtime 已升 **2.9.12.0**（2026-09-17），NuGet 上 `Microsoft.WSL.Containers` 最新仍是 **2.9.9**（仅 2.9.3/2.9.9，双通道复查无新包）。CLI 侧兼容已完成：2.9.10 #41375 的 docker 对齐表头（`名称`列 → 行尾 `NAMES` + COMMAND 列 + `Exited (0) …` 状态文案）已被 `ParseContainerList` 按 caption 定位兼容；**2.9.12 真机 verify 9 PASS / 0 FAIL / 4 NA**（输出格式与 2.9.11 一致）。2.9.12 CLI 新增 `wslc restart`（#41435）——**UI 重启按钮已于 2026-09-17 桥接交付**（`RestartAsync` + `RestartCommand`，质量门四项全绿），仅剩 C# 投影待 SDK 发包。
+
+**风险**：SDK（COM 投影）与 runtime 的版本偏移未单独实测；2.9.x 内 COM 应向后兼容（CLI 路径全绿佐证），SDK 路径（GetImages / Pull / RunAndCapture）待 SDK 升级时一并验证。
+
+**闭环条件**：NuGet 发布 2.9.12+ 后 → 升 csproj 包版本 → 补跑全套质量门（build 0/0 + 全部单测 + verify）→ 比对 [C# API 参考](https://wsl.dev/api-reference/csharp/)确认无投影/签名变化（重点看事务性 `Restart()` 是否进了 C# 投影）。
 
 ### H2：错误码映射表持续积累（随用随补）
 

@@ -101,7 +101,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 │ 日志抽屉把手 (Auto, Ctrl+L 切换)                                    │ ← FontIcon E70E/E70D 切
 │ 日志抽屉面板 (Auto, 230px) ← `Background="{ThemeResource LogPaneBg}"` │
 ├────────────────────────────────────────────────────────────────────┤
-│ 状态栏 28px：Status | StatusBarSummary · wslc 2.9.9                  │
+│ 状态栏 28px：Status | StatusBarSummary · wslc 2.9.12                 │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -150,10 +150,11 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 
 **容器列举 / 按名启停 —— 已用 `wslc` CLI 桥接实现（`WslcCli.cs`），不是空壳：**
 
-- `ListContainersAsync`：调 `wslc list -a`，用按表头推导列宽的表格解析（`WslcCli.ParseContainerList`）。wslc 2.9.9 的中文 locale 表头 `容器 ID / 名称 / 映像 / 已创建 / 状态 / 端口` 也能正确切片。**不要用 `--format json`**——wslc 2.9.9 的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期用 JSON 优先的解析路径在真实环境会静默返回空列表。
+- `ListContainersAsync`：调 `wslc list -a`，用按表头推导列宽的表格解析（`WslcCli.ParseContainerList`）。wslc 2.9.9 的中文 locale 表头 `容器 ID / 名称 / 映像 / 已创建 / 状态 / 端口` 与 2.9.11 的 docker 对齐表头 `容器 ID / 映像 / COMMAND / 已创建 / 状态 / 端口 / NAMES`（名称列改名 NAMES 且移到行尾、状态文案变 `Exited (0) …`）都能正确切片——列按 caption 定位、从不按位置。**不要用 `--format json`**——wslc 的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期用 JSON 优先的解析路径在真实环境会静默返回空列表。
   - 解析器已用真机 `wslc list -a` 联调，列对齐✅。若有新需求（新增列、改名）只需在 `ParseContainerList` 里加一行 `FindColumn(...)` 而不动 split。
   - 解析出的 `ContainerInfo` 字段（`src/wslcUI/Models/ContainerInfo.cs`）：`Id` / `Name` / `Image` / `Status` / `Ports` / `CreatedAt` + 派生 `StatusKind`（Running/Stopped/Error/Unknown，按 zh-CN + English 双向归一）/`IsRunning`/`IsStopped`/`IsError`/`IsUnknownStatus`/`StatusLabel`（徽章中文文案），其中 `Ports` / `CreatedAt` 默认 `—`（CLI 无该列时降级）。stats 字段 `Cpu` / `Mem` / `MemPercent` / `NetIo` / `Pids`（默认 `—`）+ `HasStats` 由 `MainViewModel.MergeStatsIntoContainers` 按 Name 从 `wslc stats` 快照回填。`Mounts`（默认空列表 `Array.Empty<ContainerMount>()`）+ `MountsLoaded` / `IsMountLoading` / `IsMountEmpty` / `HasMounts` / `MountCount` / `MountSummary` 由 `MainViewModel.LoadContainerMountsAsync` 在容器被选中时按需异步拉取（`wslc inspect <name> --format json`，独立 `_inspectCts` 防快速切选中覆盖；写回时三道校验 `ct.IsCancellationRequested` / `ReferenceEquals(SelectedContainer, target)` / `Containers.FirstOrDefault(...).Mounts` 防陈旧数据）。
 - `StartAsync(name)` / `StopAsync(name)`：分别调 `wslc start <name>` / `wslc stop <name>`，非零退出抛 `InvalidOperationException`。
+- `RestartAsync(name)`：调 `wslc restart <name>`（wslc 2.9.12+ 新增 CLI 命令 #41435；运行中的重启、未运行的直接启动），非零退出抛 `InvalidOperationException`。SDK 2.9.9 无 Restart() C# 投影，纯 CLI 桥接。UI 已接：容器页工具栏与详情面板的「重启」按钮（`RestartCommand`）。
 - `DeleteContainerAsync(name)`：`wslc rm <name>`，非零退出抛异常。
 - `DeleteImageAsync(reference)`：`wslc image rm <reference>`（CLI 必然支持该子命令；首次联调仅核对退出码语义与报错文案）。
 - `GetLogsAsync(name)`：`wslc logs <name>`，返回 stdout（非 `-f` 跟随）。
@@ -203,10 +204,10 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 ## 6. 关键约束与坑
 
 - **API 优先，但容器列举/启停/删除/日志/inspect + 网络/卷整套 CRUD + 资源监控 stats + 镜像构建 + 交互式终端(exec / attach) 是已知 SDK 缺口，已用 CLI 桥接（不是"封装 CLI 一切"）**：镜像拉取/运行等 SDK 覆盖的操作继续走 SDK（镜像列举是 SDK + CLI 合并去重）；容器列举/`start`/`stop`/`rm`/`logs`/`inspect`、`network`/`volume` 全部子命令、`stats`、`build -t`、`exec -it` / `attach` 因 SDK 无投影才走 CLI。不要为其他本可用 SDK 的操作也加 CLI 封装。
-- **CLI 必然支持所有已桥接的子命令**（`wslc list/start/stop/rm/logs/inspect`、`image rm`、`network`/`volume` 全套、`stats`、`build`、`exec -it`、`attach`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令是否存在"列为风险** —— 联调时只需核对输出**列格式**，退出码语义（非零抛异常）已就位。
+- **CLI 必然支持所有已桥接的子命令**（`wslc list/start/stop/restart/rm/logs/inspect`、`image rm`、`network`/`volume` 全套、`stats`、`build`、`exec -it`、`attach`）。CLI 是原生事实来源、永远先于 SDK；滞后的只是预览版 `Microsoft.WSL.Containers` SDK 投影。**不要再把"子命令是否存在"列为风险** —— 联调时只需核对输出**列格式**，退出码语义（非零抛异常）已就位。
 - **`--format json` 不可靠**：wslc 2.9.9 不同子命令的 JSON 形态不一致（list/images/stats 是单对象、network 是 NDJSON），早期"JSON 优先回退表格"的代码在真实环境静默返回空列表。**统一走按表头推导列宽的表格解析**（`WslcCli.SplitByColumns` / `ComputeColumnBoundaries` / `FindColumn`）。**例外**：`volume ls --format json`（Mountpoint 列只在 JSON 里）和 `inspect <name> --format json`（Mounts 嵌套数组在表格里完全不可见）必须走 JSON；这是因为相关列/字段**不存在于表格里**，不是 JSON 形态问题。
 - **wslc stats 不接受 docker 标志**：`--no-stream` / `-f` 之类都会报"选项名称未被识别"——wslc 默认就是一次性快照，**不要**在 stats 里传 `--no-stream`。
-- **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.9**（与 wslc 2.9.9.0 对齐）。GA（预计 2026 秋）前的破坏性变更需重编译；升级先比对 API 参考。
+- **锁定 SDK 版本 `Microsoft.WSL.Containers` 2.9.9**。**wslc runtime 已升 2.9.12.0（2026-09-17），但 NuGet 上 SDK 最新仍是 2.9.9（只有 2.9.3/2.9.9，无 2.9.12 包，2026-09-17 双通道复查）**——SDK 与 runtime 暂时版本偏移，2.9.x 内 COM 向后兼容，真机 verify 已过（CLI 路径全绿，2.9.12 输出格式与 2.9.11 一致）；SDK 路径（GetImages/Pull/RunAndCapture）未单独实测版本偏移。**待办：SDK 发 2.9.12+ 后升级并补跑全套质量门**（GA 前破坏性变更需重编译，升级先比对 API 参考）。CLI 侧兼容已完成：`wslc list -a` 2.9.11+ docker 对齐表头（`NAMES` 列）已被 `ParseContainerList` 按 caption 兼容；2.9.12 的 prune 默认确认语义（`-f` 跳过）本项目未用到 prune，无影响；2.9.12 新增 `wslc restart` CLI 命令，如需 UI 重启按钮可桥接（C# 投影仍缺）。
 - **已核对过的关键 SDK 成员名（2.9.9，对照 [C# API 参考](https://wsl.dev/api-reference/csharp/)，并用独立控制台项目对 2.9.9 包做编译验证）**：`GetMissingComponents()` 返回 `IReadOnlyList<Component>`（判空用 `.Count == 0`，**不是** `ComponentFlags.None`）；`ProcessSettings.CommandLine`（**不是** `CmdLine`）；`Session.GetImages()` 返回 `IReadOnlyList<ImageInfo>`（`Name`/`Sha256`(IBuffer)/`Size`(ulong)/`CreatedTimestamp`）；`Container.Delete(DeleteContainerOption.None|Force)`；`Signal.SIGTERM`。`EnableAutoRemove` 官方示例未出现，已移除（改显式 `Delete`）。**⚠️ 2.9.9 的 `InitProcess.OutputReceived`/`ErrorReceived` 回调参数是 `byte[]`（2.9.3/2.9.4 是 `IBuffer`）**：`WslcSdkClient.cs` 里的 `data.ToArray()` 写法两态兼容（`IBuffer` 走 WinRT 扩展、`byte[]` 走 LINQ），无需改；若日后清理可改为直接 `Encoding.UTF8.GetString(data)`。
 - **⚠️ 命名空间隔离（2.9.9 实测结论，改代码前必读）**：SDK `Session`（storagePath，如 `%LOCALAPPDATA%\wslcUI\session`）与 `wslc` CLI（WSL2 rootfs / 默认会话）**互不可见**。实测：SDK 拉的镜像、建的容器，`wslc list -a` / `wslc images` 都看不到；反之 CLI 的容器 `Session.OpenContainer` 也打不开。因此：容器列举/启停/删除/日志的 CLI 桥接**不可**迁移到 SDK（UI 管理的是 CLI 命名空间容器）；`Session.OpenContainer(name, mode)` 只能操作 SDK 会话自己 `CreateContainer` 的容器（2.9.9 新增，已实测：可打开、`Stop(Signal, TimeSpan)`、`Delete(Force)` 可用，但 **Stop 后不能 Start**，抛 `InvalidOperationException`）。
 - **2.9.9 SDK 相对 2.9.3 的新 API（反射 diff + 实测）**：`Session.OpenContainer(name, mode)`、`Session.DeleteImage(nameOrId)`、`PushImage(Async)`+`PushImageOptions`、`TagImage`+`TagImageOptions`、`ImportImage(Async)(path, name)`、`LoadImage(Async)(path)`、`CreateVhdVolume`/`DeleteVhdVolume`、`Authenticate(Uri,user,pass)`、事件 `Terminated`/`ProcessCrashed`。**其中只有镜像删除被 wslcUI 采用**：`DeleteImageAsync` 现在是命名空间感知的 —— reference 命中 `Session.GetImages()`（忽略大小写）则 `Session.DeleteImage`，否则回退 `wslc image rm`（修复了"SDK 镜像 UI 可见但删不掉"的 bug）。其余新 API 因命名空间分裂、UI 合并列表下对 CLI 镜像无意义而暂未接入（Tag/Push/Import/Load 如需接入，需在 UI 上区分镜像来源或只对 SDK 镜像开放）。

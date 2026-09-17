@@ -31,6 +31,12 @@ public interface IWslcClient
 
     Task StopAsync(string name, CancellationToken ct = default);
 
+    /// <summary>
+    /// 重启容器（CLI bridge: <c>wslc restart &lt;name&gt;</c>，wslc 2.9.12+）。
+    /// 未运行的容器会被直接启动。SDK 2.9.9 无 Restart() C# 投影，只能走 CLI。
+    /// </summary>
+    Task RestartAsync(string name, CancellationToken ct = default);
+
     /// <summary>Removes a container by name (CLI bridge: `wslc rm`).</summary>
     Task DeleteContainerAsync(string name, CancellationToken ct = default);
 

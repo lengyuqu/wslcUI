@@ -110,6 +110,8 @@
                                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
                                     <Button Content="启动" Command="{x:Bind ViewModel.StartCommand}"
                                             IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                                    <Button Content="重启" Command="{x:Bind ViewModel.RestartCommand}"
+                                            IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
                                     <Button Content="停止" Command="{x:Bind ViewModel.StopCommand}"
                                             IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
                                     <Button Content="日志" Command="{x:Bind ViewModel.ShowLogsCommand}"
@@ -934,11 +936,15 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Button Grid.Column="0" Content="启动" HorizontalAlignment="Stretch"
                                                 Command="{x:Bind ViewModel.StartCommand}"
                                                 IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
-                                        <Button Grid.Column="1" Content="停止" HorizontalAlignment="Stretch"
+                                        <Button Grid.Column="1" Content="重启" HorizontalAlignment="Stretch"
+                                                Command="{x:Bind ViewModel.RestartCommand}"
+                                                IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                                        <Button Grid.Column="2" Content="停止" HorizontalAlignment="Stretch"
                                                 Command="{x:Bind ViewModel.StopCommand}"
                                                 IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
                                     </Grid>
@@ -1287,7 +1293,7 @@
             <TextBlock HorizontalAlignment="Right" FontSize="11.5" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}">
                 <Run Text="{x:Bind ViewModel.StatusBarSummary, Mode=OneWay}" />
-                <Run Text=" · wslc 2.9.9" />
+                <Run Text=" · wslc 2.9.12" />
             </TextBlock>
         </Grid>
     </Grid>

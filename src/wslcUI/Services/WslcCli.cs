@@ -137,6 +137,15 @@ internal static class WslcCli
             throw new InvalidOperationException($"wslc stop 失败: {stderr.Trim()}");
     }
 
+    // wslc 2.9.12+ 新增 `wslc restart <name>`（#41435；未运行的容器会被直接启动）。
+    // SDK 2.9.9（NuGet 最新）无 Restart() C# 投影，故走 CLI 桥接。
+    public static async Task RestartAsync(string name, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(new[] { "restart", name }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc restart 失败: {stderr.Trim()}");
+    }
+
     public static async Task DeleteContainerAsync(string name, CancellationToken ct)
     {
         var (exit, _, stderr) = await RunAsync(new[] { "rm", name }, ct).ConfigureAwait(false);
@@ -552,8 +561,11 @@ internal static class WslcCli
     /// <summary>
     /// Parses <c>wslc list -a</c> output. Real header observed on wslc 2.9.9.0:
     /// <c>容器 ID      名称       映像        已创建    状态        端口</c>
-    /// (zh-CN locale). Same column order as docker: ID | NAME | IMAGE |
-    /// CREATED | STATUS | PORTS, but column CAPTIONS differ.
+    /// (zh-CN locale). wslc 2.9.11 aligned the format with docker (#41375):
+    /// the NAME column moved to the END and was renamed (zh: <c>NAMES</c>),
+    /// a COMMAND column was inserted after IMAGE, and status text became
+    /// docker-style (<c>Exited (0) 10 days ago</c>). Both shapes are supported:
+    /// columns are located by caption, never by position.
     /// </summary>
     internal static IReadOnlyList<ContainerInfo> ParseContainerList(string output)
     {
@@ -581,6 +593,8 @@ internal static class WslcCli
         if (idIdx < 0) idIdx = FindColumn(boundaries, headerLine, "CONTAINER ID");
         var nameIdx = FindColumn(boundaries, headerLine, "名称");
         if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAME");
+        // wslc 2.9.11+（docker 对齐）：名称列改名为 NAMES 且移到行尾。
+        if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAMES");
         var imgIdx = FindColumn(boundaries, headerLine, "映像");
         if (imgIdx < 0) imgIdx = FindColumn(boundaries, headerLine, "IMAGE");
         var statusIdx = FindColumn(boundaries, headerLine, "状态");

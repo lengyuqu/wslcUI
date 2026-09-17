@@ -797,6 +797,30 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task RestartAsync()
+    {
+        if (SelectedContainer is null) return;
+        var name = SelectedContainer.Name;
+        var ct = BeginOp();
+        IsBusy = true;
+        Status = $"重启 {name} …";
+        try
+        {
+            // wslc restart（2.9.12+）：运行中的重启、未运行的直接启动
+            await _client.RestartAsync(name, ct);
+            await RefreshAsync();
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
     private async Task PullAsync()
     {
         var reference = PullReference.Trim();

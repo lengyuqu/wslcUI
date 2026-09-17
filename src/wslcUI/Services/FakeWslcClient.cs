@@ -43,6 +43,8 @@ public sealed class FakeWslcClient : IWslcClient
 
     public Task StopAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
 
+    public Task RestartAsync(string name, CancellationToken ct = default) => Task.CompletedTask;
+
     public Task DeleteContainerAsync(string name, CancellationToken ct = default) =>
         Task.CompletedTask;
 
