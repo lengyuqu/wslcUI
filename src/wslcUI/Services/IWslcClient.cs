@@ -33,7 +33,7 @@ public interface IWslcClient
 
     /// <summary>
     /// 重启容器（CLI bridge: <c>wslc restart &lt;name&gt;</c>，wslc 2.9.12+）。
-    /// 未运行的容器会被直接启动。SDK 2.9.9 无 Restart() C# 投影，只能走 CLI。
+    /// 未运行的容器会被直接启动。SDK 3.0.1 仍无 Restart() C# 投影，只能走 CLI。
     /// </summary>
     Task RestartAsync(string name, CancellationToken ct = default);
 
@@ -77,7 +77,7 @@ public interface IWslcClient
     /// <summary>
     /// 读取容器的完整 inspect 元数据，仅取 <c>Mounts</c> 数组。
     /// CLI bridge：<c>wslc inspect &lt;name&gt; --format json</c>。
-    /// SDK 2.9.9 无 inspect 投影，且 <c>wslc list -a</c> 不返回挂载关联——
+    /// SDK 3.0.1 仍无 inspect 投影，且 <c>wslc list -a</c> 不返回挂载关联——
     /// 调用方（详情面板）选中容器时按需拉取，避免 Refresh 主路径 N+1。
     /// </summary>
     Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default);

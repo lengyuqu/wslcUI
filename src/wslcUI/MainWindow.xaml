@@ -1293,7 +1293,7 @@
             <TextBlock HorizontalAlignment="Right" FontSize="11.5" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}">
                 <Run Text="{x:Bind ViewModel.StatusBarSummary, Mode=OneWay}" />
-                <Run Text=" · wslc 2.9.12" />
+                <Run Text=" · wslc 3.0.1" />
             </TextBlock>
         </Grid>
     </Grid>

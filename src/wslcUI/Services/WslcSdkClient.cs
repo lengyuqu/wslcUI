@@ -15,7 +15,7 @@ using UiImageInfo = wslcUI.Models.ImageInfo;
 namespace wslcUI.Services;
 
 /// <summary>
-/// Real backend driving wslc via the Microsoft.WSL.Containers 2.9.9 SDK.
+/// Real backend driving wslc via the Microsoft.WSL.Containers 3.0.1 SDK.
 ///
 /// Coverage (verified against https://wsl.dev/api-reference/csharp/):
 ///   - IsReadyAsync        ← WslcService.GetMissingComponents()
@@ -23,7 +23,7 @@ namespace wslcUI.Services;
 ///   - PullImageAsync      ← Session.PullImageAsync()         (pure SDK)
 ///   - RunAndCaptureAsync  ← Session.CreateContainer() + Start (pure SDK)
 ///
-/// SDK GAPS in 2.9.9 (the C# projection does not expose these, see
+/// SDK GAPS in 3.0.1 (the C# projection does not expose these, see
 /// wsl.dev/api-reference/csharp/known-gaps/): there is no
 /// Session.GetContainers() and no Session.GetContainer(name). Those and a
 /// few more operations are bridged through the `wslc` CLI in WslcCli.cs:
@@ -260,7 +260,7 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task RemoveVolumeAsync(string name, CancellationToken ct = default) =>
         WslcCli.RemoveVolumeAsync(name, ct);
 
-    // ---- container inspect (CLI bridge: SDK 2.9.9 无 inspect 投影，wslc list -a 不带 Mounts) ----
+    // ---- container inspect (CLI bridge: SDK 3.0.1 无 inspect 投影，wslc list -a 不带 Mounts) ----
     public Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default) =>
         WslcCli.InspectContainerAsync(name, ct);
 

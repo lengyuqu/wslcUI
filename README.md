@@ -12,18 +12,18 @@ C# SDK 为主驱动 wslc,SDK 无投影的能力(容器列举/启停/删除/日�
 | 语言 / 运行时 | C# · .NET 10 (net10.0-windows10.0.26100) |
 | 模式 | MVVM — CommunityToolkit.Mvvm (源生成器) |
 | 依赖注入 | Microsoft.Extensions.DependencyInjection |
-| 容器后端 | `Microsoft.WSL.Containers` 2.9.9 (wslc SDK, **preview**；NuGet 最新，待 2.9.12+ 发包后升级) + `wslc` CLI 桥接 |
+| 容器后端 | `Microsoft.WSL.Containers` 3.0.1 (wslc SDK, **GA**) + `wslc` CLI 桥接 |
 
 ## 环境前置
 
 1. **Visual Studio 2026 (18.x) / 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
    *Windows App SDK* (WinUI 3)。
 2. **.NET 10 SDK**。
-3. **WSL2 + wslc 2.9.12**（≥ 2.9.9；2.9.11+ 表头已兼容）：
+3. **WSL2 + wslc 3.0.1**（GA；≥ 2.9.9 均可，2.9.11+ 与 3.0.1 表头均已兼容）：
    ```powershell
    wsl --install --no-distribution
    wsl --update
-   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 2.9.12.0
+   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 3.0.1.0
    ```
 4. WinUI 3 **unpackaged** 运行时：安装
    [Windows App SDK 2.4 运行时](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
@@ -38,18 +38,20 @@ C# SDK 为主驱动 wslc,SDK 无投影的能力(容器列举/启停/删除/日�
   `AddSingleton<IWslcClient, WslcSdkClient>()` 换成 `FakeWslcClient`，
   即可离线开发 XAML / ViewModel。
 
-## 已知缺口(预览期)
+## 已知缺口
 
 - `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志 / inspect**、**网络 / 卷整套 CRUD**、**资源监控 stats**、**镜像构建**、**交互式终端**
-  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 2.9.9 的 C# 投影没有 `Session.GetContainers()` /
+  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 3.0.1 的 C# 投影仍然没有 `Session.GetContainers()` /
   `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影、也没有 stats / 镜像构建 / inspect 端点。其余 SDK 覆盖的操作（镜像拉取 /
   运行）继续走 SDK；**镜像列举是 SDK 与 CLI 两个命名空间的合并去重**——二者互不可见，只取其一都会漏。
-- 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 2.9.9 不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
+- 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 3.0.1 仍不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
 - 镜像构建（`wslc build -t <tag> <context>`，`WslcCli.BuildImageAsync`，逐行流式回传日志）已实现，「构建」页含上下文目录选择 + 标签 + 滚动日志。
 - 容器挂载关联（`wslc inspect <name> --format json` → `Mounts[]`，`WslcCli.InspectContainerAsync`）已实现：容器列表「卷」列 + 详情面板「挂载」区块 + 卷页的反向被引清单；选中容器时按需异步拉取而非并入主刷新（避免 N+1），并有独立取消源防快速切换选中导致的陈旧回填。
 - 交互式终端已实现且**已真机联调**：`wslc exec -it <name> /bin/sh`（容器内起新进程）与 `wslc attach <name>`（附加到运行中容器的现有前台进程），经 Windows Pseudoconsole（`Services/ConPty.cs`）给容器真 TTY；渲染走 **XTerm.NET（VT 解析 + cell 缓冲）+ 自研 WinUI 渲染层**（`Terminal/TerminalView.cs`，256 色 / 真彩色 / bold / inverse / CJK 双宽），选型见 [docs/TERMINAL-RENDER-DECISION.md](docs/TERMINAL-RENDER-DECISION.md)。输入侧为**真键盘转发**（`Terminal/TerminalInputMapper.cs`：KeyDown / 字符 / 粘贴直达 PTY stdin，Ctrl/Alt 组合键自合成），非 InputBox 整行发送。
   ⚠️ 开发机（Win11 26200.9278 insider）存在**机器级 ConPTY 故障**：任何 PTY 子进程 `0xC0000142` 启动即死（三重实验定责系统，与 wslcUI 无关）。开窗前的 `PseudoConsole.ProbeHealth()` 预检会拦下并弹诊断，不会开出一个黑屏死窗口。
-- SDK 与 wslc 同为预览，GA 预计 2026 年秋；锁版本 2.9.9 以避免破坏性变更。
+- SDK 与 wslc 已于 2026-09-29 同期 **GA（3.0.1）**，包版本锁在 `3.0.1` 与 runtime 对齐。
+  3.0.1 SDK 相对 2.9.9 的 winmd 差异为**纯增量、无删除**（`IProcessSettings.EnableStandardInput`、`ErrorCode.ContainerDeleted`），
+  本项目未引用二者，升包源兼容；**仍无 `compose` 命令**（官方列为最想要的待办，无时间表）。
 
 ## 验证与测试
 

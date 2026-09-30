@@ -1,7 +1,7 @@
 # wslcUI 遗留问题修复计划
 
-> 修订日期：2026-09-10 ｜ 覆盖修订版 2（其 P4-R3 已完成，见下表）｜ 2026-09-11 增补 S1 ｜ 2026-09-17 S1 复查（runtime 2.9.12）
-> 基线：`eea9b29` ｜ 环境：WinR9 / Win11 26200.9278 insider / wslc 2.9.12.0（runtime）/ SDK 2.9.9
+> 修订日期：2026-09-10 ｜ 覆盖修订版 2（其 P4-R3 已完成，见下表）｜ 2026-09-11 增补 S1 ｜ 2026-09-17 S1 复查（runtime 2.9.12）｜ **2026-09-30 S1 闭环（WSLc GA 3.0.1）**
+> 基线：`eea9b29` ｜ 环境：WinR9 / Win11 26200.9278 insider / wslc 3.0.1.0（runtime）/ SDK 3.0.1
 > 质量门（每批次不变）：`dotnet build` 0 错误 0 警告 + `dotnet test` 全过（当前 135 用例）+ 涉及 CLI/PTY 的批次补跑 verify
 
 ---
@@ -21,6 +21,7 @@
 | R5 | 容器关联数据卷：`inspect --format json` → Mounts → 详情面板/列表卷列/卷页反向被引 | `7388c7b`、`d896ed6` | `InspectContainerJsonTests` 8 例 + 反向映射单测 |
 | attach | 附加到运行中容器前台进程（`TerminalWindow.Mode { Exec, Attach }`，`wslc attach <name>`） | `d74280f` | `BuildCommand` 2 例单测（路径/容器名含空格）；视觉验收待 P1a |
 | H2 | 官方错误码全集核对入库（15 个 `WSLC_E_*` + 4 个 HRESULT）+ 未映射码留痕 | `fc20fd6` | `TranslateCliErrorTests` 全过 |
+| S1 | SDK 升级 `Microsoft.WSL.Containers` 2.9.9 → **3.0.1**（对齐 wslc 3.0.1 runtime） | （本次） | winmd diff 纯增量；sln Debug 0/0 + x64 Release 0/0 + 135 单测 + verify 9 PASS / 0 FAIL / 4 NA |
 
 R1 交付的两个已知限制在 R3 的处置情况：
 - ~~光标定位 / 全屏程序~~ ✅ R3 已解决（XTerm.NET cell buffer + CUP/ED/EL/备用屏）。
@@ -29,15 +30,15 @@ R1 交付的两个已知限制在 R3 的处置情况：
 
 ---
 
-## 二、剩余遗留问题（2 项 + 1 项被动）
+## 二、剩余遗留问题（1 项 + 1 项维护）
 
 | 编号 | 问题 | 类型 | 规模 | 前置依赖 |
 |------|------|------|------|----------|
 | P1a | ConPTY 机器级故障复验 | 外部依赖 | — | Windows 更新（被动） |
 | H2 | 错误码映射表持续积累 | 维护 | 小 | 随真机使用触发 |
-| S1 | SDK 升级 `Microsoft.WSL.Containers` 2.9.12+（对齐 wslc runtime） | 外部依赖 | 小 | NuGet 发包（被动） |
 
 > P4-R3 已于 `004fb5b` 交付（XTerm.NET 集成 + `TerminalView` 渲染层 + Resize 三级联动），不再是遗留项。
+> **S1 已于 2026-09-30 闭环**（见上文已完成项表）。
 
 ### P1a：ConPTY 机器级故障复验（被动等待，随时可插）
 
@@ -53,13 +54,22 @@ R1 交付的两个已知限制在 R3 的处置情况：
 3. 闭环收尾：AGENTS.md 第 5 节标注「ConPTY 已于 build xxxxx 真机验证通过」并删除「未联调」警示；顺带真机验收 XTerm.NET 渲染的彩色输出（`ls --color` / `grep`）。
 4. 可选加速：Insider 反馈中心提交复现（材料已在 `3b0f40a` commit message + 修复报告）；或尝试 `DISM /Online /Cleanup-Image /RestoreHealth`。
 
-### S1：SDK 升级对齐 wslc runtime（被动等待，2026-09-11 记录 / 2026-09-17 复查）
+### S1：SDK 升级对齐 wslc runtime（✅ 2026-09-30 闭环）
 
-**现状**：wslc runtime 已升 **2.9.12.0**（2026-09-17），NuGet 上 `Microsoft.WSL.Containers` 最新仍是 **2.9.9**（仅 2.9.3/2.9.9，双通道复查无新包）。CLI 侧兼容已完成：2.9.10 #41375 的 docker 对齐表头（`名称`列 → 行尾 `NAMES` + COMMAND 列 + `Exited (0) …` 状态文案）已被 `ParseContainerList` 按 caption 定位兼容；**2.9.12 真机 verify 9 PASS / 0 FAIL / 4 NA**（输出格式与 2.9.11 一致）。2.9.12 CLI 新增 `wslc restart`（#41435）——**UI 重启按钮已于 2026-09-17 桥接交付**（`RestartAsync` + `RestartCommand`，质量门四项全绿），仅剩 C# 投影待 SDK 发包。
+**闭环经过**：wslc runtime 2026-09-17 已到 2.9.12.0，但同期 NuGet 上 `Microsoft.WSL.Containers` 仍只有 2.9.3/2.9.9，形成版本偏移。**2026-09-29 WSL Containers GA（3.0.1）** 后 NuGet 同步发布 3.0.1 包（列表 `2.9.3 / 2.9.9 / 3.0.1`），偏移消除，本批完成升包。
 
-**风险**：SDK（COM 投影）与 runtime 的版本偏移未单独实测；2.9.x 内 COM 应向后兼容（CLI 路径全绿佐证），SDK 路径（GetImages / Pull / RunAndCapture）待 SDK 升级时一并验证。
+**winmd API 实测 diff（2.9.9 → 3.0.1）：纯增量、无删除**
 
-**闭环条件**：NuGet 发布 2.9.12+ 后 → 升 csproj 包版本 → 补跑全套质量门（build 0/0 + 全部单测 + verify）→ 比对 [C# API 参考](https://wsl.dev/api-reference/csharp/)确认无投影/签名变化（重点看事务性 `Restart()` 是否进了 C# 投影）。
+| 变更 | 类型 | 说明 |
+|------|------|------|
+| `IProcessSettings.EnableStandardInput` | 新增 bool 属性 | 对应官方 release notes 的 "Support STDIN through SDK" |
+| `ErrorCode.ContainerDeleted` | 新增枚举成员 | 加在 `VolumeNotAvailable` 之后；`ContainerState.Deleted` 未变 |
+
+项目源码零引用二者 → 升包容。**`Restart()` 仍未进入 C# 投影**（`RestartAsync` 继续走 CLI 桥接），network/volume/stats/inspect/构建投影同样仍缺。
+
+**质量门（四项全过）**：`wslcUI.sln` Debug 0 错 0 警 ｜ `src/wslcUI` x64 Release 0 错 0 警 ｜ 单测 135/135 ｜ verify 9 PASS / 0 FAIL / 4 NA。
+
+**遗留机会**：`EnableStandardInput` 可用于**经 SDK 给进程喂 stdin**，是本机 ConPTY 机器级故障（P1a）长期不修复时驱动 `wslc exec -it` 的**绕过路径**——待 P1a 判定后再评估是否替换 `Services/ConPty.cs`。
 
 ### H2：错误码映射表持续积累（随用随补）
 

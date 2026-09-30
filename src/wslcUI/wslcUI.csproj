@@ -28,10 +28,13 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <!-- wslc container SDK (preview). Pinned to 2.9.9 to match wslc 2.9.9.0
-         (nuget.org publishes 2.9.3 and 2.9.9; 2.9.9 is the generation
-         matching the current wslc CLI). -->
-    <PackageReference Include="Microsoft.WSL.Containers" Version="2.9.9" />
+    <!-- wslc container SDK (GA as of 3.0.1). Pinned to 3.0.1 to match the
+         wslc 3.0.1.0 CLI (nuget.org publishes 2.9.3 / 2.9.9 / 3.0.1).
+         winmd diff vs 2.9.9 is additive only (no removals):
+           + IProcessSettings.EnableStandardInput (bool) — "STDIN through SDK"
+           + ErrorCode.ContainerDeleted
+         Neither is referenced by this project, so the bump is source-compatible. -->
+    <PackageReference Include="Microsoft.WSL.Containers" Version="3.0.1" />
     <!-- R3：终端核心（VT/ANSI 解析 + 屏幕 cell buffer + 输入序列生成）。
          选型见 docs/TERMINAL-RENDER-DECISION.md（双盲 spike：4/4 真实 VT 流夹具
          零修改渲染正确，CJK 双宽自带；MIT、headless、无 UI 依赖）。 -->

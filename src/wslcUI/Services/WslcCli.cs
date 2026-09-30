@@ -11,7 +11,7 @@ namespace wslcUI.Services;
 
 /// <summary>
 /// Bridge to the <c>wslc</c> CLI for the operations the Microsoft.WSL.Containers
-/// 2.9.9 SDK does NOT project into C#:
+/// 3.0.1 SDK does NOT project into C#:
 ///   - enumerating existing containers   (no <c>Session.GetContainers()</c>)
 ///   - looking up a container by name  (no <c>Session.GetContainer(name)</c>)
 ///   - start / stop / remove a container by name
@@ -29,10 +29,10 @@ namespace wslcUI.Services;
 /// reused directly by the interactive terminal (TerminalWindow) for `wslc exec -it`.
 ///
 /// <para>
-/// <b>Why we never use <c>--format json</c></b>: wslc 2.9.9 advertises a JSON
-/// format flag, but the shape is inconsistent per command — some commands emit
-/// a single object, some emit NDJSON (newline-delimited objects), some emit
-/// none at all. Going through JSON added path branches that silently returned
+/// <b>Why we never use <c>--format json</c></b>: wslc advertises a JSON
+/// format flag, but the shape is inconsistent per command (observed on 2.9.9:
+/// list/images/stats emit a single object, network emits NDJSON, some emit
+/// none at all). Going through JSON added path branches that silently returned
 /// empty lists. Table output is uniform: a single header line followed by
 /// padded data rows. We parse it with header-derived fixed-width column
 /// boundaries (<see cref="SplitByColumns"/>), which round-trips for both the
@@ -138,7 +138,7 @@ internal static class WslcCli
     }
 
     // wslc 2.9.12+ 新增 `wslc restart <name>`（#41435；未运行的容器会被直接启动）。
-    // SDK 2.9.9（NuGet 最新）无 Restart() C# 投影，故走 CLI 桥接。
+    // SDK 3.0.1 仍无 Restart() C# 投影，故走 CLI 桥接。
     public static async Task RestartAsync(string name, CancellationToken ct)
     {
         var (exit, _, stderr) = await RunAsync(new[] { "restart", name }, ct).ConfigureAwait(false);
@@ -269,7 +269,7 @@ internal static class WslcCli
             throw new InvalidOperationException($"wslc volume remove 失败: {stderr.Trim()}");
     }
 
-    // ---- container inspect（CLI bridge：SDK 2.9.9 无 inspect 投影）
+    // ---- container inspect（CLI bridge：SDK 3.0.1 无 inspect 投影）
     // `wslc list -a` 只返回简表（ID/名称/映像/状态/端口），容器与卷/网络的
     // 关联关系统统不在表里。Mounts 必须单独 `wslc inspect <name>` 走 JSON。
     // 输出形态：外层是单元素数组的 JSON（wslc 2.9.9.0 实测，
