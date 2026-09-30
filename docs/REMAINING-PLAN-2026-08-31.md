@@ -69,7 +69,9 @@ R1 交付的两个已知限制在 R3 的处置情况：
 
 **质量门（四项全过）**：`wslcUI.sln` Debug 0 错 0 警 ｜ `src/wslcUI` x64 Release 0 错 0 警 ｜ 单测 135/135 ｜ verify 9 PASS / 0 FAIL / 4 NA。
 
-**遗留机会**：`EnableStandardInput` 可用于**经 SDK 给进程喂 stdin**，是本机 ConPTY 机器级故障（P1a）长期不修复时驱动 `wslc exec -it` 的**绕过路径**——待 P1a 判定后再评估是否替换 `Services/ConPty.cs`。
+**遗留机会（已核实语义，勿高估）**：`EnableStandardInput` 是**进程级 stdin 开关**——默认 `false` 时容器进程看到的 stdin **立即关闭**（读到的永远是 EOF），C 头文件原文："Standard input is disabled by default: without this flag the process observes an immediately closed stdin and `WSLC_PROCESS_IO_HANDLE_STDIN` cannot be used."。置 `true` 后 stdin 变成**可写管道**，经 `Process.GetInputStream()`（返回 `IOutputStream`）写入；必须在 `Process.Start()` / `Session.CreateContainer()` **之前**设置。C 侧对应 `WSLC_PROCESS_FLAG_STDIN`（`WslcSetProcessSettingsFlags`，未知位报 `E_INVALIDARG`）。`Process.GetInputStream()` 在 2.9.9 就存在于投影里，但**当时没有开关可用**，所以实际不可用。
+
+⚠️ **它是管道，不是 TTY**：不提供行编辑、`isatty()` 仍为假、无 job control、无全屏程序，颜色也会因非 tty 而不输出。因此**不能替代 `Services/ConPty.cs` 的真 TTY 终端**；若 P1a 长期不修，最多只能作为**降级终端**（相当于 R1 时代的管道 MVP）——不过它走的是 SDK/容器 VM 路径、不经过 Windows ConPTY，是否绕开本机 `0xC0000142` 故障**需实测**才能定论。
 
 ### H2：错误码映射表持续积累（随用随补）
 
