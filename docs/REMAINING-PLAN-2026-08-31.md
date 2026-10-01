@@ -2,7 +2,7 @@
 
 > 修订日期：2026-09-10 ｜ 覆盖修订版 2（其 P4-R3 已完成，见下表）｜ 2026-09-11 增补 S1 ｜ 2026-09-17 S1 复查（runtime 2.9.12）｜ **2026-09-30 S1 闭环（WSLc GA 3.0.1）**
 > 基线：`eea9b29` ｜ 环境：WinR9 / Win11 26200.9278 insider / wslc 3.0.1.0（runtime）/ SDK 3.0.1
-> 质量门（每批次不变）：`dotnet build` 0 错误 0 警告 + `dotnet test` 全过（当前 135 用例）+ 涉及 CLI/PTY 的批次补跑 verify
+> 质量门（每批次不变）：`dotnet build` 0 错误 0 警告 + `dotnet test` 全过（当前 **243** 用例）+ 涉及 CLI/PTY 的批次补跑 verify
 
 ---
 

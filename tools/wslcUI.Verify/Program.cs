@@ -105,8 +105,12 @@ internal static class Program
             "volume ls", new[] { "VOLUME NAME", "DRIVER" },
             async ct => (await WslcCli.ListVolumesAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: false);
+        // 原始探针的参数必须与生产代码（WslcCli.GetStatsAsync）**逐字一致**，
+        // 否则比的是两个不同命令，检查失去意义 —— 2026-10-02 把 GetStatsAsync
+        // 从不带参数的 `stats` 改成 `stats -a`（不带时只返回一个容器）时，
+        // 这里漏改，V2.5 立刻报「解析 1 条 != 原始数据行数 0」。
         await VerifyTable("V2.5 stats   编码+解析",
-            "stats", new[] { "容器 ID", "CONTAINER ID" },
+            "stats -a", new[] { "容器 ID", "CONTAINER ID" },
             async ct => (await WslcCli.GetStatsAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: true);
     }

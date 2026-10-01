@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -213,12 +216,39 @@ internal static class WslcCli
 
     // ---- stats (no SDK projection). wslc stats is ALREADY a one-shot snapshot:
     // it does not stream and does not accept docker's `--no-stream` flag (that
-    // errors with "选项名称未被识别"). It also offers a `--format json` flag but
-    // we deliberately skip it — see class doc. ----
+    // errors with "选项名称未被识别"). ----
+    //
+    // ⚠️ 必须带 `-a`（2026-10-02 实测发现）：`wslc stats` **不带参数时只返回一个容器**
+    // （最近的那个），统计页此前因此永远只显示 1 行 —— 是个存量 bug。
+    // `stats -a` 才返回全部容器（含已停止的，其值为 0B/0.00%，属真实读数）。
+    // 另注：位置参数只认**容器名**，短 ID 与完整 ID 都会报 WSLC_E_CONTAINER_NOT_FOUND。
     public static async Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct)
     {
-        var (exit, stdout, stderr) = await RunAsync(new[] { "stats" }, ct).ConfigureAwait(false);
+        var (exit, stdout, stderr) = await RunAsync(new[] { "stats", "-a" }, ct).ConfigureAwait(false);
         return exit == 0 ? ParseStats(stdout) : throw CliFailed("wslc stats", exit, stderr);
+    }
+
+    /// <summary>
+    /// 数值形态的 stats 快照，供实时采样 / 曲线用（`wslc stats -a --format json`）。
+    ///
+    /// <para>
+    /// 这里破例用 <c>--format json</c>：表格里的 <c>2.715MiB / 30.96GiB</c>、<c>0.00%</c>
+    /// 都是给人看的字符串，画曲线要么解析这些（脆弱）要么走 JSON 的同一批字段。
+    /// 表格**主路径仍然不用 JSON**（见类注释）。
+    /// </para>
+    ///
+    /// <para>
+    /// 形态：**NDJSON，一行一个容器**（多容器实测；单容器时看起来像"单对象"，
+    /// 这正是本仓库早期误判"stats 是单对象"的原因）。数组包裹形态也一并兼容。
+    /// </para>
+    /// </summary>
+    public static async Task<IReadOnlyList<StatInfo>> GetStatsSnapshotAsync(CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(
+            new[] { "stats", "-a", "--format", "json" }, ct).ConfigureAwait(false);
+        return exit == 0
+            ? ParseStatsJson(stdout)
+            : throw CliFailed("wslc stats --format json", exit, stderr);
     }
 
     // ---- networks (no SDK projection) ----
@@ -267,6 +297,215 @@ internal static class WslcCli
         var (exit, _, stderr) = await RunAsync(new[] { "volume", "remove", name }, ct).ConfigureAwait(false);
         if (exit != 0)
             throw new InvalidOperationException($"wslc volume remove 失败: {stderr.Trim()}");
+    }
+
+    // ---- prune（维护页）----
+    // 四条都**必须**带 `-f`：wslc 自 2.9.12 起 prune 对齐 docker 语义，默认弹交互式
+    // 确认提示。非交互调用不加 -f 会让子进程挂住等 stdin（我们的 RunAsync 不喂 stdin，
+    // 于是永久等待 → UI 卡在"清理中"）。这里没有例外，也不提供"不带 -f"的入口。
+    //
+    // 返回 CLI **原始输出**：prune 的回收量文案（"Total reclaimed space: …"）
+    // 随版本/语言变化，解析会漂移；原样透传由 UI 直接展示，永不过期。
+
+    public static async Task<string> PruneContainersAsync(CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(new[] { "container", "prune", "-f" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc container prune 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    public static async Task<string> PruneImagesAsync(bool all, CancellationToken ct)
+    {
+        var args = all
+            ? new[] { "image", "prune", "-f", "-a" }
+            : new[] { "image", "prune", "-f" };
+        var (exit, stdout, stderr) = await RunAsync(args, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image prune 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    public static async Task<string> PruneNetworksAsync(CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(new[] { "network", "prune", "-f" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc network prune 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    public static async Task<string> PruneVolumesAsync(CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(new[] { "volume", "prune", "-f" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc volume prune 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    // ---- 容器内文件系统（文件浏览窗口）----
+    // 全部走 CLI：SDK 3.0.1 只有「往容器里跑进程 / 拿进程 stdout」的抽象，
+    // 没有文件系统投影；列目录靠 `exec ls`，搬文件靠 `container cp`。
+    // 路径经 ArgumentList 逐参数传递（见 RunAsync），含空格/引号不会被拆开。
+
+    /// <summary>
+    /// 列出容器内某个目录。用 <c>-a</c>（不是 <c>-A</c>）拿到 <c>.</c>/<c>..</c> 以便
+    /// 在解析层统一丢弃，两种实现（busybox / GNU）行为一致。
+    /// </summary>
+    public static async Task<IReadOnlyList<ContainerFileEntry>> ListDirectoryAsync(
+        string container, string path, CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(
+            new[] { "exec", container, "ls", "-la", path }, ct).ConfigureAwait(false);
+        if (exit != 0)
+        {
+            // `ls` 的错误在 stderr（"ls: /nope: No such file or directory"）；
+            // 少数情况下 exec 自身的报错只出现在 stdout，兜底取其一。
+            var detail = stderr.Trim().Length > 0 ? stderr.Trim() : stdout.Trim();
+            throw new InvalidOperationException($"读取容器目录失败: {detail}");
+        }
+        return ParseDirectoryListing(stdout);
+    }
+
+    /// <summary>
+    /// 容器 → 宿主（`wslc container cp &lt;ctr&gt;:&lt;path&gt; &lt;local&gt;`）。
+    /// 目标**可以不存在**，按 <paramref name="localPath"/> 的名字创建（实测 2026-10-02）。
+    /// </summary>
+    public static async Task CopyFromContainerAsync(
+        string container, string containerPath, string localPath, CancellationToken ct)
+    {
+        var (exit, _, stderr) = await RunAsync(
+            new[] { "container", "cp", $"{container}:{containerPath}", localPath }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"从容器复制失败: {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 宿主 → 容器（`wslc container cp &lt;local&gt; &lt;ctr&gt;:&lt;dir&gt;/`）。
+    ///
+    /// <para>
+    /// ⚠️ **wslc 的 cp 与 docker 语义不同，实测 2026-10-02（wslc 3.0.1）**：
+    /// 目标**必须是容器内已存在的目录**，且**不能指定目标文件名**（名字沿用本地文件名）。
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><c>cp ./a.txt ctr:/tmp/a.txt</c>（目标文件不存在）→ <c>ERROR_PATH_NOT_FOUND</c>「Could not find the file /tmp/a.txt in container」</item>
+    ///   <item><c>cp ./a.txt ctr:/tmp/a.txt</c>（目标文件已存在）→ <c>E_FAIL</c>「extraction point is not a directory」</item>
+    ///   <item>✅ <c>cp ./a.txt ctr:/tmp/</c>（已存在的目录）→ 成功，落在 <c>/tmp/a.txt</c></item>
+    ///   <item>❌ stdin 形态 <c>cp - ctr:/tmp/x.txt</c> 同样报 PATH_NOT_FOUND —— 帮助里写的「标准输入到容器」在 3.0.1 上对不存在的目标不可用</item>
+    /// </list>
+    /// 因此 <paramref name="containerDir"/> 是**目录**（末尾斜杠由本方法补齐），
+    /// 不做「另存为」这种交互——那不是 wslc 能表达的语义。
+    /// </summary>
+    public static async Task CopyToContainerAsync(
+        string container, string localPath, string containerDir, CancellationToken ct)
+    {
+        var dir = containerDir.EndsWith('/') ? containerDir : containerDir + "/";
+        var (exit, _, stderr) = await RunAsync(
+            new[] { "container", "cp", localPath, $"{container}:{dir}" }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException(
+                $"复制到容器失败: {stderr.Trim()}（注意 wslc 要求目标目录必须已存在，且不能指定目标文件名）");
+    }
+
+    /// <summary>
+    /// 删除容器内一个路径（`exec &lt;ctr&gt; rm -rf &lt;path&gt;`）。
+    /// **递归且不可撤销** —— 调用方必须先确认；这里不做二次询问。
+    /// </summary>
+    public static async Task DeletePathAsync(string container, string path, CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(
+            new[] { "exec", container, "rm", "-rf", path }, ct).ConfigureAwait(false);
+        if (exit != 0)
+        {
+            var detail = stderr.Trim().Length > 0 ? stderr.Trim() : stdout.Trim();
+            throw new InvalidOperationException($"删除失败: {detail}");
+        }
+    }
+
+    /// <summary>`ls -la` 的列分隔符（空格 + 制表符）。</summary>
+    private static readonly char[] ListingSeparators = { ' ', '\t' };
+
+    /// <summary>
+    /// 解析 `ls -la` 输出。真实形态见 <see cref="ContainerFileEntry"/> 的类注释；
+    /// 首行 <c>total 16</c> 靠"第 1 段不是权限串"自然丢弃，不依赖它的本地化文案。
+    ///
+    /// <para>
+    /// 用 <c>Split(separators, 9, RemoveEmptyEntries)</c> 而不是正则：前 8 列都是
+    /// 无空格的单 token，第 9 段就是文件名整体（**保留内部空格**，见真机夹具
+    /// <c>name with space.txt</c>）。要求恰好 9 段 + 第 1 段是权限串 + 第 5 段是数字，
+    /// 三重校验把 <c>total</c>、告警行、空行全部挡掉。
+    /// </para>
+    ///
+    /// <para>
+    /// 已知取舍：文件名**以空格开头**时前导空格会被吃掉（`ls` 自身的列填充与之
+    /// 本就无法区分）；<c>.</c> 与 <c>..</c> 被丢弃，上层导航由 UI 的「上级目录」负责。
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<ContainerFileEntry> ParseDirectoryListing(string output)
+    {
+        var result = new List<ContainerFileEntry>();
+        if (string.IsNullOrEmpty(output)) return result;
+
+        foreach (var rawLine in output.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+            if (line.Length == 0) continue;
+
+            var parts = line.Split(ListingSeparators, 9, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 9) continue;
+            if (!IsPermissionString(parts[0])) continue;
+            if (!long.TryParse(parts[4], NumberStyles.None, CultureInfo.InvariantCulture, out var size)) continue;
+
+            var kind = parts[0][0] switch
+            {
+                'd' => ContainerFileKind.Directory,
+                'l' => ContainerFileKind.Link,
+                '-' => ContainerFileKind.File,
+                _ => ContainerFileKind.Other,
+            };
+
+            var name = parts[8];
+            var linkTarget = "";
+            // 只在权限位是 l 时才切 " -> "：普通文件名里含这三个字符不会误判成链接。
+            if (kind == ContainerFileKind.Link)
+            {
+                var arrow = name.IndexOf(" -> ", StringComparison.Ordinal);
+                if (arrow >= 0)
+                {
+                    linkTarget = name[(arrow + 4)..];
+                    name = name[..arrow];
+                }
+            }
+
+            if (name.Length == 0 || name == "." || name == "..") continue;
+
+            result.Add(new ContainerFileEntry
+            {
+                Name = name,
+                Permissions = parts[0],
+                Owner = parts[2],
+                Group = parts[3],
+                SizeBytes = size,
+                // 第 8 列可能是时刻（16:44）也可能是年份（2026），两者都是单 token，
+                // 拼起来原样展示，不做日期归一。
+                Modified = $"{parts[5]} {parts[6]} {parts[7]}",
+                LinkTarget = linkTarget,
+                Kind = kind,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 10 字符权限串校验（首字符类型 + 9 个 rwx 位）。
+    /// 允许第 11 个字符存在（SELinux 的 `.`、ACL 的 `+`、扩展属性的 `@`）。
+    /// </summary>
+    private static bool IsPermissionString(string s)
+    {
+        if (s.Length < 10) return false;
+        if ("-dlbcps".IndexOf(s[0]) < 0) return false;
+        for (var i = 1; i < 10; i++)
+            if ("rwxsStT-".IndexOf(s[i]) < 0) return false;
+        return true;
     }
 
     // ---- container inspect（CLI bridge：SDK 3.0.1 无 inspect 投影）
@@ -711,6 +950,101 @@ internal static class WslcCli
     ///   网络 I/O   块 I/O   PIDS</c>. <c>stats</c> defaults to running
     /// containers only; if there are none, wslc prints an empty table.
     /// </summary>
+    /// <summary>
+    /// 解析 `wslc stats -a --format json`（**NDJSON：一行一个容器**，多容器实测确认；
+    /// 数组包裹形态也兼容）。字段名与 docker 对齐：
+    /// <c>Name / CPUPerc("2.20%") / MemUsage("3.719MiB / 30.96GiB") / MemPerc / NetIO / BlockIO / PIDs / ID</c>。
+    ///
+    /// <para>
+    /// 只做两件事：填给人看的字符串（与表格路径一致）+ 抽两个数（<see cref="StatInfo.CpuPercent"/>、
+    /// <see cref="StatInfo.MemUsedBytes"/>）供曲线用。数值解析失败时该条 <c>HasNumbers=false</c>，
+    /// 曲线上跳过该点而不是画成 0（画成 0 会被误读成"CPU 归零"）。
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<StatInfo> ParseStatsJson(string output)
+    {
+        var result = new List<StatInfo>();
+        if (string.IsNullOrWhiteSpace(output)) return result;
+
+        // 数组包裹形态（单行 [ {...}, {...} ]）
+        var trimmed = output.TrimStart();
+        if (trimmed.StartsWith('['))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(output);
+                foreach (var el in doc.RootElement.EnumerateArray())
+                    AddStatFromJson(result, el);
+            }
+            catch (JsonException) { /* 畸形 JSON：返回已解析到的部分 */ }
+            return result;
+        }
+
+        // NDJSON：逐行独立解析，单行坏掉不影响其余
+        foreach (var raw in output.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] != '{') continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                AddStatFromJson(result, doc.RootElement);
+            }
+            catch (JsonException) { /* 跳过坏行 */ }
+        }
+        return result;
+    }
+
+    private static void AddStatFromJson(List<StatInfo> sink, JsonElement el)
+    {
+        var name = GetJsonString(el, "Name");
+        if (name.Length == 0) return;
+
+        var cpuText = GetJsonString(el, "CPUPerc");
+        var memText = GetJsonString(el, "MemUsage");
+
+        var stat = new StatInfo
+        {
+            Container = name,
+            Cpu = cpuText,
+            Mem = memText,
+            MemPercent = GetJsonString(el, "MemPerc"),
+            NetIo = GetJsonString(el, "NetIO"),
+            BlockIo = GetJsonString(el, "BlockIO"),
+            Pids = el.TryGetProperty("PIDs", out var pids) ? pids.ToString() : "",
+        };
+
+        // CPU："2.20%" → 2.20
+        var cpuOk = TryParsePercent(cpuText, out var cpuPercent);
+        stat.CpuPercent = cpuPercent;
+
+        // 内存："3.719MiB / 30.96GiB" → 取斜杠前那一段
+        var memOk = false;
+        var parts = memText.Split('/');
+        if (parts.Length > 0 && SizeParser.TryParseBytes(parts[0].Trim(), out var memUsed))
+        {
+            stat.MemUsedBytes = memUsed;
+            memOk = true;
+        }
+
+        stat.HasNumbers = cpuOk && memOk;
+        sink.Add(stat);
+    }
+
+    private static string GetJsonString(JsonElement el, string name) =>
+        el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() ?? ""
+            : "";
+
+    /// <summary>解析 `"2.20%"`。百分号可有可无，但**空串/非数字返回 false**。</summary>
+    internal static bool TryParsePercent(string? text, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.Trim().TrimEnd('%').Trim();
+        return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
     internal static IReadOnlyList<StatInfo> ParseStats(string output)
     {
         var result = new List<StatInfo>();

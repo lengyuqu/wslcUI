@@ -71,6 +71,17 @@ public sealed class FakeWslcClient : IWslcClient
             new() { Container = "db", Cpu = "2.31%", Mem = "48.7MiB / 2GiB", MemPercent = "2.38%", NetIo = "3.4kB / 1.1kB", BlockIo = "2.0MB / 0B", Pids = "21" },
         });
 
+    public Task<IReadOnlyList<StatInfo>> GetStatsSnapshotAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<StatInfo>>(new List<StatInfo>
+        {
+            new() { Container = "web", Cpu = "0.52%", Mem = "14.2MiB / 2GiB", MemPercent = "0.69%",
+                    NetIo = "1.2kB / 0B", BlockIo = "0B / 0B", Pids = "12",
+                    CpuPercent = 0.52, MemUsedBytes = 14889779, HasNumbers = true },
+            new() { Container = "db", Cpu = "2.31%", Mem = "48.7MiB / 2GiB", MemPercent = "2.38%",
+                    NetIo = "3.4kB / 1.1kB", BlockIo = "2.0MB / 0B", Pids = "21",
+                    CpuPercent = 2.31, MemUsedBytes = 51060327, HasNumbers = true },
+        });
+
     public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<NetworkInfo>>(new List<NetworkInfo>
         {
@@ -111,4 +122,58 @@ public sealed class FakeWslcClient : IWslcClient
             },
             _ => Array.Empty<ContainerMount>(),
         });
+
+    // ---- prune（离线开发用：回显一段与真实 CLI 同形状的输出）----
+    public Task<string> PruneContainersAsync(CancellationToken ct = default) =>
+        Task.FromResult("Deleted Containers:\n0f1e2d3c4b5a\n\nTotal reclaimed space: 0B\n");
+
+    public Task<string> PruneImagesAsync(bool all, CancellationToken ct = default) =>
+        Task.FromResult(all
+            ? "Deleted Images:\nuntagged: nginx:latest\n\nTotal reclaimed space: 187MB\n"
+            : "Total reclaimed space: 0B\n");
+
+    public Task<string> PruneNetworksAsync(CancellationToken ct = default) =>
+        Task.FromResult("Deleted Networks:\nwslcUI-net\n");
+
+    public Task<string> PruneVolumesAsync(CancellationToken ct = default) =>
+        Task.FromResult("Deleted Volumes:\ncache-vol\n");
+
+    // ---- 容器内文件系统（离线开发用假树）----
+    public Task<IReadOnlyList<ContainerFileEntry>> ListDirectoryAsync(
+        string container, string path, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ContainerFileEntry>>(path switch
+        {
+            "/" => new List<ContainerFileEntry>
+            {
+                new() { Name = "etc", Kind = ContainerFileKind.Directory, Permissions = "drwxr-xr-x",
+                        Owner = "root", Group = "root", SizeBytes = 4096, Modified = "Jun 13 16:38" },
+                new() { Name = "usr", Kind = ContainerFileKind.Directory, Permissions = "drwxr-xr-x",
+                        Owner = "root", Group = "root", SizeBytes = 4096, Modified = "Jun 13 16:38" },
+                new() { Name = "etc-link", Kind = ContainerFileKind.Link, Permissions = "lrwxrwxrwx",
+                        Owner = "root", Group = "root", SizeBytes = 4, Modified = "Oct 1 16:44",
+                        LinkTarget = "/etc" },
+                new() { Name = "name with space.txt", Kind = ContainerFileKind.File,
+                        Permissions = "-rw-r--r--", Owner = "root", Group = "root",
+                        SizeBytes = 3, Modified = "Oct 1 16:44" },
+            },
+            _ => new List<ContainerFileEntry>
+            {
+                new() { Name = "alpine-release", Kind = ContainerFileKind.File,
+                        Permissions = "-rw-r--r--", Owner = "root", Group = "root",
+                        SizeBytes = 7, Modified = "Jun 13 15:17" },
+                new() { Name = "apk", Kind = ContainerFileKind.Directory, Permissions = "drwxr-xr-x",
+                        Owner = "root", Group = "root", SizeBytes = 4096, Modified = "Jun 13 16:38" },
+            },
+        });
+
+    public Task CopyFromContainerAsync(
+        string container, string containerPath, string localPath, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task CopyToContainerAsync(
+        string container, string localPath, string containerPath, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task DeletePathAsync(string container, string path, CancellationToken ct = default) =>
+        Task.CompletedTask;
 }

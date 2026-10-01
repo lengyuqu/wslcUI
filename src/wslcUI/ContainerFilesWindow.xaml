@@ -1,0 +1,122 @@
+<Window
+    x:Class="wslcUI.ContainerFilesWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:conv="using:wslcUI.Converters">
+
+    <Grid x:Name="Root" Padding="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 工具栏：路径 + 导航 + 上传 -->
+        <Grid Grid.Row="0" Padding="12,10" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="路径" VerticalAlignment="Center" FontSize="12.5"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBox Grid.Column="1" VerticalAlignment="Center"
+                     PlaceholderText="容器内绝对路径，如 /etc"
+                     Text="{x:Bind ViewModel.CurrentPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                     KeyDown="PathBox_KeyDown" />
+            <Button Grid.Column="2" Content="转到" Command="{x:Bind ViewModel.NavigateCommand}" />
+            <Button Grid.Column="3" Content="上级目录" Command="{x:Bind ViewModel.GoUpCommand}"
+                    IsEnabled="{x:Bind ViewModel.CanGoUp, Mode=OneWay}" />
+            <Button Grid.Column="4" Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
+            <Button Grid.Column="5" Content="上传到此处" Style="{StaticResource AccentButtonStyle}"
+                    Click="Upload_Click" />
+        </Grid>
+
+        <InfoBar Grid.Row="1" Margin="12,0,12,8"
+                 IsOpen="{x:Bind ViewModel.IsErrorOpen, Mode=OneWay}"
+                 Severity="Error"
+                 Title="操作失败"
+                 Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+
+        <!-- 表头 -->
+        <Grid Grid.Row="2" Padding="12,6" ColumnSpacing="8"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="28" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="150" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" Text="名称" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="2" Text="大小" FontSize="12" FontWeight="SemiBold"
+                       HorizontalAlignment="Right"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="3" Text="修改时间" FontSize="12" FontWeight="SemiBold"
+                       HorizontalAlignment="Right"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Grid>
+
+        <!-- 列表 -->
+        <ListView Grid.Row="3" Margin="12,0,12,0"
+                  ItemsSource="{x:Bind ViewModel.Entries, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.SelectedEntry, Mode=TwoWay}"
+                  DoubleTapped="EntriesList_DoubleTapped"
+                  SelectionMode="Single">
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="models:ContainerFileEntry"
+                              xmlns:models="using:wslcUI.Models">
+                    <Grid ColumnSpacing="8" Padding="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="28" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="150" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" FontSize="14" Glyph="{x:Bind Glyph}"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="{x:Bind Name}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{x:Bind Detail}" FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{x:Bind SizeDisplay}" FontSize="12.5"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="3" Text="{x:Bind Modified}" FontSize="12.5"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <TextBlock Grid.Row="3" Text="目录为空，或尚未加载。"
+                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasEntries), Mode=OneWay}" />
+
+        <!-- 底部操作条 -->
+        <Grid Grid.Row="4" Padding="12,10" ColumnSpacing="8"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" FontSize="12"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="{x:Bind ViewModel.Status, Mode=OneWay}" />
+            <Button Grid.Column="1" Content="下载到…" Click="Download_Click"
+                    IsEnabled="{x:Bind ViewModel.HasSelectedEntry, Mode=OneWay}" />
+            <Button Grid.Column="2" Content="删除" Click="Delete_Click"
+                    IsEnabled="{x:Bind ViewModel.HasSelectedEntry, Mode=OneWay}" />
+        </Grid>
+    </Grid>
+</Window>

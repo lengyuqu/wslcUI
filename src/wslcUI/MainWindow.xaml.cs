@@ -163,6 +163,18 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// 打开容器内文件浏览窗口。与 exec 同源限制：`wslc exec` 需要容器**正在运行**，
+    /// 所以按钮的可用性跟「附加到容器」共用 <c>CanAttachContainer</c>（= 选中且 Running）。
+    /// </summary>
+    private void OpenFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedContainer is null) return;
+        if (!ViewModel.SelectedContainer.IsRunning) return;
+        var files = new ContainerFilesWindow(ViewModel.SelectedContainer.Name);
+        files.Activate();
+    }
+
+    /// <summary>
     /// 把 NavigationView 的选中项映射成 VM.CurrentPage。
     /// 用 Tag("Containers" / "Images" / ...) → ViewModel.NavigateCommand 解析。
     /// 不要直接写 VM.CurrentPage —— 走命令保留 OnCurrentPageChanged 的副作用（清搜索、刷新过滤）。

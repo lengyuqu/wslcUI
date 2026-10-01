@@ -244,6 +244,9 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct = default) =>
         WslcCli.GetStatsAsync(ct);
 
+    public Task<IReadOnlyList<StatInfo>> GetStatsSnapshotAsync(CancellationToken ct = default) =>
+        WslcCli.GetStatsSnapshotAsync(ct);
+
     // ---- networks (no SDK projection → CLI bridge, see WslcCli.cs) ----
     public Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default) =>
         WslcCli.ListNetworksAsync(ct);
@@ -263,6 +266,37 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     // ---- container inspect (CLI bridge: SDK 3.0.1 无 inspect 投影，wslc list -a 不带 Mounts) ----
     public Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default) =>
         WslcCli.InspectContainerAsync(name, ct);
+
+    // ---- prune（SDK 3.0.1 无 prune 投影，四个全走 CLI）----
+    // 注意：CLI prune 只作用于 **CLI 命名空间**（wslc 会话的 dockerd），
+    // 拿不到 SDK 自己 storagePath 下的 session 资源 —— 与容器列举同源限制。
+    public Task<string> PruneContainersAsync(CancellationToken ct = default) =>
+        WslcCli.PruneContainersAsync(ct);
+
+    public Task<string> PruneImagesAsync(bool all, CancellationToken ct = default) =>
+        WslcCli.PruneImagesAsync(all, ct);
+
+    public Task<string> PruneNetworksAsync(CancellationToken ct = default) =>
+        WslcCli.PruneNetworksAsync(ct);
+
+    public Task<string> PruneVolumesAsync(CancellationToken ct = default) =>
+        WslcCli.PruneVolumesAsync(ct);
+
+    // ---- 容器内文件系统（SDK 3.0.1 无文件系统投影，全走 CLI）----
+    public Task<IReadOnlyList<ContainerFileEntry>> ListDirectoryAsync(
+        string container, string path, CancellationToken ct = default) =>
+        WslcCli.ListDirectoryAsync(container, path, ct);
+
+    public Task CopyFromContainerAsync(
+        string container, string containerPath, string localPath, CancellationToken ct = default) =>
+        WslcCli.CopyFromContainerAsync(container, containerPath, localPath, ct);
+
+    public Task CopyToContainerAsync(
+        string container, string localPath, string containerDir, CancellationToken ct = default) =>
+        WslcCli.CopyToContainerAsync(container, localPath, containerDir, ct);
+
+    public Task DeletePathAsync(string container, string path, CancellationToken ct = default) =>
+        WslcCli.DeletePathAsync(container, path, ct);
 
     public void Dispose()
     {

@@ -95,8 +95,9 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 │  ─ 分割                                        │                     │
 │  · 统计                                       │                     │
 │  · 构建                                       │                     │
+│  · 维护                                       │                     │
 ├──────────┴─────────────────────────────────────┴───────────────────┤
-│ 内容区：每个 page 一个 Grid（搜索 + 工具栏 + 表头 + ListView + 空态） │ ← 6 个 Grid 用 Visibility 互斥
+│ 内容区：每个 page 一个 Grid（搜索 + 工具栏 + 表头 + ListView + 空态） │ ← 7 个 Grid 用 Visibility 互斥
 ├────────────────────────────────────────────────────────────────────┤
 │ 日志抽屉把手 (Auto, Ctrl+L 切换)                                    │ ← FontIcon E70E/E70D 切
 │ 日志抽屉面板 (Auto, 230px) ← `Background="{ThemeResource LogPaneBg}"` │
@@ -105,7 +106,11 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-**ViewModel 与 XAML 配套（6 个 page 互斥切换）**：`MainViewModel` 暴露 `ResourcePage` 枚举 + `CurrentPage` 偏属性；六个 `IsContainersPage` / `IsImagesPage` / `IsNetworksPage` / `IsVolumesPage` / `IsStatsPage` / `IsBuildPage` 派生 `bool` 由 `OnCurrentPageChanged` 同步翻转，XAML 用 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsXxxPage), Mode=OneWay}"` 互斥。`SearchText` 在切 page 时被 `OnCurrentPageChanged` 清空，避免跨页 filter 残留。
+**ViewModel 与 XAML 配套（7 个 page 互斥切换）**：`MainViewModel` 暴露 `ResourcePage` 枚举 + `CurrentPage` 偏属性；七个 `IsContainersPage` / `IsImagesPage` / `IsNetworksPage` / `IsVolumesPage` / `IsStatsPage` / `IsBuildPage` / `IsMaintenancePage` 派生 `bool` 由 `OnCurrentPageChanged` 同步翻转，XAML 用 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsXxxPage), Mode=OneWay}"` 互斥。`SearchText` 在切 page 时被 `OnCurrentPageChanged` 清空，避免跨页 filter 残留。
+
+> 维护页是**唯一没有搜索/排序/详情面板**的页（`HasSelection` 的 `_ => false` 已覆盖）：它不放列表，只放 4 张占用卡片 + 5 条清理命令 + 一块 CLI 原始输出区。
+> 进页时 `OnCurrentPageChanged` 会调 `UpdateMaintenanceSummary()` 重算数字 —— 四个数字是 `[ObservableProperty]` 字符串而**不是**派生属性，因为 `Containers` 会被 `UpdateContainersInPlace` 就地改内容（集合实例不变 → 属性通知不触发），派生属性会读到陈旧计数。
+
 
 ### `App.xaml` 资源键
 
@@ -175,16 +180,54 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 **资源监控 stats —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 3.0.1 的 C# 投影**没有** stats / 资源监控端点（SDK 对象模型 `WslcService`/`Session`/`Container`/`Process` 均无对应成员），因此与容器列举/启停、网络/卷同属"SDK 无投影 → CLI 桥接"路径。
-- `GetStatsAsync`：`wslc stats`（wslc 默认就是一次性快照，**不接受** docker 的 `--no-stream` 标志——运行会报"选项名称未被识别"）。
-  `WslcCli.RunAsync` 保留**取消即杀进程**安全网（`ct.Register(() => proc.Kill())`）作为通用防护，stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。已用真机联调，中文表头 `容器 ID / 名称 / CPU 百分比 / 最大用量/限制 / 内存百分比 / 网络 I/O / 块 I/O / PIDS` 8 列按列宽解析 ✅。
+- ⚠️ **必须带 `-a`**（2026-10-02 实测修正的存量 bug）：`wslc stats` **不带参数时只返回一个容器**（最近的那个），统计页此前因此永远只显示 1 行。`stats -a` 才返回全部容器（含已停止的，其值为真实的 `0B`/`0.00%`，不是解析失败）。
+  另注：位置参数只认**容器名**；短 ID 与完整 ID 都报 `WSLC_E_CONTAINER_NOT_FOUND`。
+- `GetStatsAsync`：`wslc stats -a` + `ParseStats`（**表格路径**，给人看的字符串）。wslc 默认就是一次性快照，**不接受** docker 的 `--no-stream` 标志（报"选项名称未被识别"）。
+  `WslcCli.RunAsync` 保留**取消即杀进程**安全网；stats 也**不**进主 `RefreshCommand` 而是独立的 `RefreshStatsCommand`，避免任何潜在卡顿波及主刷新。
+- `GetStatsSnapshotAsync`：`wslc stats -a --format json` + `ParseStatsJson`（**JSON 路径**，只为拿可计算的数值）。形态是 **NDJSON：一行一个容器** —— 单容器时看起来像"单对象"，这正是本仓库早期误判"stats 是单对象"、进而全盘弃用 JSON 的原因。数组包裹形态一并兼容；坏行只丢该行。数值解析失败时 `StatInfo.HasNumbers=false`，曲线上**跳过**该点而不是画成 0。
 - `ParseStats`：表格优先，按表头推导列宽解析；列名定位而非硬编码下标，新增列只需补一个 `Idx(...)`。
-- UI 已接：MainWindow 的 `NavigationView` "统计" 页：搜索 + 「刷新快照」按钮（独立 `RefreshStatsCommand` 不进主刷新，避免 stats 卡顿波及主流程）+ 4 个指标卡（运行中 / 已停止或异常 / 快照数 / 镜像网络卷）+ 列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID），绑定 `Stats` 与 `RefreshStatsCommand`。
+- **实时曲线（2026-10-02）**：stats 不流式，所以曲线靠**轮询自己攒历史**。`MainViewModel.ToggleSamplingCommand` → `DispatcherQueueTimer` 每 3 秒调一次 `GetStatsSnapshotAsync`，历史按容器名分桶、每桶上限 `MaxSamples=60`（超出丢最旧）。`Services/SparklineGeometry.cs` 是纯函数（返回 `(double X,double Y)`，**不含 UI 类型**）负责把采样值折成坐标，`RebuildSparklines()` 再塞进 `PointCollection`。
+  两条曲线（CPU / 内存）**各自独立成图**：都按本批最大值自动缩放，叠在一张图里会诱使人跨曲线比高度。因此峰值数字写进 `SparkSummary` 文案，读图不会误判。
+  离开统计页自动 `StopSampling()` —— 后台每 3 秒起一个 wslc 进程没有意义。构造 `DispatcherQueueTimer` 前先取 `DispatcherQueue.GetForCurrentThread()`，拿不到就明确报错而不是假装在采样。
+- UI 已接：MainWindow 的 `NavigationView` "统计" 页：搜索 + 「刷新快照」按钮 + 「开始/停止采样」按钮 + 4 个指标卡（运行中 / 已停止或异常 / 快照数 / 镜像网络卷）+ 列表（容器 / CPU% / 内存·限制 / 内存% / 网络 I/O / 块 I/O / PID）；详情面板含 CPU / 内存两张 sparkline。绑定 `Stats` / `RefreshStatsCommand` / `ToggleSamplingCommand`。
+
+**容器内文件浏览 —— 已实现（独立窗口，`ContainerFilesWindow`，2026-10-02）**
+
+- 对标 Docker Desktop 的 Container File Explorer 的**子集**：浏览 / 上传 / 下载 / 删除，**不含在线编辑**。
+- 独立窗口而不是嵌进主窗口：文件浏览有自己的导航状态与生命周期，塞进三栏布局会把"选中容器"和"选中文件"两套选择纠缠在一起（同 `TerminalWindow` 的理由）。
+- 列目录：`wslc exec <ctr> ls -la <path>` → `WslcCli.ParseDirectoryListing`（纯函数）。解析用 `Split(separators, 9, RemoveEmptyEntries)` 而非正则：前 8 列都是无空格单 token，第 9 段就是文件名整体（**保留内部空格**）。三重校验（恰好 9 段 + 首段是权限串 + 第 5 段是数字）把 `total 16`、错误行、空行全挡掉。
+  真机夹具见 `tests/wslcUI.Tests/Services/DirectoryListingTests.cs`（含 `total` 首行、`Mar 24  2026` 年月替代时刻、`link1 -> /etc/hostname`、含空格文件名四种形态）。
+- ⚠️ **`wslc container cp` 与 docker 语义不同**（实测 2026-10-02，**改这块前必读**）：
+  | 写法 | 结果 |
+  |------|------|
+  | `cp <ctr>:/etc/hostname ./x.txt` | ✅ 容器 → 宿主，目标可不存在 |
+  | `cp ./a.txt <ctr>:/tmp/a.txt`（目标不存在） | ❌ `ERROR_PATH_NOT_FOUND` |
+  | `cp ./a.txt <ctr>:/tmp/a.txt`（目标已存在） | ❌ `E_FAIL`「extraction point is not a directory」 |
+  | `cp ./a.txt <ctr>:/tmp/`（已存在的目录） | ✅ 落在 `/tmp/a.txt` |
+  | `cp - <ctr>:/tmp/x.txt`（stdin 形态） | ❌ 同样 `ERROR_PATH_NOT_FOUND` |
+  即上传**必须有已存在的目标目录**且**不能指定目标文件名**。因此 UI 只提供「上传到当前目录」，`CopyToContainerAsync` 的第三参是**目录**（末尾斜杠由方法补齐）。
+- 仅对**运行中**容器可用（`exec` 需要容器在跑），按钮与「附加到容器」共用 `CanAttachContainer` 守门。
+- 对话框与文件选择器都**必须挂本窗口**：unpackaged WinUI 3 里 ContentDialog 不设 XamlRoot 会直接抛，FileOpenPicker/FileSavePicker 不 `InitializeWithWindow` 也是。**不能用 `DialogService`** —— 它取的是 `App.MainWindow` 的 XamlRoot，会弹到主窗口上。改由窗口构造时注入 `ConfirmAsync` 回调。
+- 纯路径函数（`ParentOf` / `Combine` / `NormalizeInputPath`）是 `internal static`，24 例单测见 `tests/wslcUI.Tests/ViewModels/ContainerFilesPathTests.cs`。
+- 测试接缝：默认用真实 IWslcClient（同 TerminalWindow 的做法），未走 DI。
 
 **镜像构建 build —— 已实现，走 `wslc` CLI 桥接（`WslcCli.cs`）：**
 
 - 3.0.1 SDK **没有** Dockerfile 构建的投影（只有运行期 `CreateContainer`）；镜像构建走 `wslc build -t <tag> <context>`（从目录里的 `Dockerfile`/`Containerfile` 构建）。
 - `BuildImageAsync(contextDir, tag, progress)`：`wslc build -t <tag> "<contextDir>"`，用 `OutputDataReceived` 逐行流式回传构建日志（非一次性读到底），非零退出抛 `InvalidOperationException`。空标签抛 `ArgumentException`；目录 / Dockerfile 缺失抛 `DirectoryNotFoundException`/`FileNotFoundException`。
 - UI 已接：MainWindow 的 `NavigationView` "构建" 页，含"上下文目录输入框 + 浏览(FolderPicker) + 标签输入框 + 构建按钮 + 只读滚动日志"，绑定 `BuildContext`/`PickBuildContextCommand`/`BuildTag`/`BuildImageCommand`/`BuildOutput`。`FolderPicker` 经 `InitializeWithWindow` 挂到 MainWindow 句柄（`MainViewModel.OwnerHandle`，由 `MainWindow` 构造时设置）。
+
+**维护页（磁盘占用 + 一键清理）—— 已实现，走 `wslc` CLI 桥接（2026-10-02）：**
+
+- 定位：对标 Docker Desktop 的 Disk usage 面板 + 「Clean up」按钮。**这是 wslc 侧数据受限最明显的一块，不要过度承诺**：
+  - `wslc` **没有** `system df` 之类的总占用命令（实测 `wslc system df` → 「无法识别的命令」）。
+  - 只有镜像有可用大小（`wslc images` 的 `SIZE` 列）；`wslc volume list --format json` 的 `Size` 恒为 **`"N/A"`**；容器大小只在 `wslc list -a --size` 里以 `0B (虚拟 451MB)` 这种混合形态出现，解析脆弱、**刻意不采**。
+  - 所以卡片只给「镜像总占用」，容器/卷显示**数量**而非体积。若某个 SIZE 解析失败，合计前缀加 **`≥`** 明示是下界（不许静默当 0）。
+- `Services/SizeParser.cs`：`size 字符串 ⇄ 字节数` 纯函数（`TryParseBytes` / `Format`），`internal static`，32 例单测见 `tests/wslcUI.Tests/Services/SizeParserTests.cs`。容忍无空格（真机 `451MB`）与带空格（`187 MB`）两种形态、大小写不敏感、接受 `KiB/MiB` 写法；**不可识别时返回 `false` 而不是 0**。
+- `IWslcClient` 新增 4 个 prune 方法：`PruneContainersAsync` / `PruneImagesAsync(bool all)` / `PruneNetworksAsync` / `PruneVolumesAsync`。全部桥接 CLI，**一律带 `-f`** —— wslc 自 2.9.12 起 prune 默认弹交互式确认，不加 `-f` 会让子进程永久等 stdin（我们不给它 stdin），UI 就卡在"清理中"。
+- **返回值是 CLI 原始 stdout，UI 原样展示、不做解析**：回收量文案（`Total reclaimed space: …`）随版本与语言变化，解析必然漂移；原样透传永不过期。输出区**最新一条在最上面**（不滚动也能看到本次结果）。
+- UI：`MainWindow` 「维护」页 = 4 张占用卡片 + 5 条清理命令（容器 / 悬空镜像 / 全部未用镜像 / 网络 / 卷）+ CLI 原始输出区。所有破坏性操作都过 `IDialogService.ConfirmAsync`，高风险的（全部未用镜像、卷）文案里带 ⚠ 并写清后果。
+- **命名空间限制**：prune 只作用于 **CLI 命名空间**（wslc 会话的 dockerd），碰不到 `WslcSdkClient` 自己 storagePath 下的 SDK session 资源 —— 与容器列举同源限制，已在 `WslcSdkClient.cs` 注释标明。
 
 **交互式终端 exec/attach —— 已实现（ConPTY + XTerm.NET cell 渲染）**
 

@@ -7,8 +7,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using wslcUI.Models;
 using wslcUI.Services;
 using Windows.Storage.Pickers;
@@ -16,7 +18,7 @@ using WinRT.Interop;
 
 namespace wslcUI.ViewModels;
 
-/// <summary>左侧导航的六个页面。替换原先平铺的 Pivot。</summary>
+/// <summary>左侧导航的七个页面。替换原先平铺的 Pivot。</summary>
 public enum ResourcePage
 {
     Containers,
@@ -25,6 +27,7 @@ public enum ResourcePage
     Volumes,
     Stats,
     Build,
+    Maintenance,
 }
 
 public partial class MainViewModel : ObservableObject
@@ -86,6 +89,33 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial string BuildTag { get; set; } = "myimage:latest";
     [ObservableProperty] public partial string BuildOutput { get; set; } = "";
 
+    // ---------------- 维护页（磁盘占用 + 一键清理）----------------
+    // 四个卡片的文案（字符串而非数值：占用是格式化后的，计数带单位"个"）。
+    // 用 [ObservableProperty] 承载而不是直接算，是因为 Images/Containers 可能在
+    // 其它页面被就地合并（UpdateContainersInPlace），靠派生属性通知不可靠；
+    // 改为在固定时点（进维护页 / 主刷新后 / 每次清理后）统一重算。
+    [ObservableProperty] public partial string ImageTotalSizeText { get; set; } = "—";
+    [ObservableProperty] public partial string ImageCountText { get; set; } = "0";
+    [ObservableProperty] public partial string ReclaimableContainersText { get; set; } = "0";
+    [ObservableProperty] public partial string NetworkVolumeCountText { get; set; } = "0 / 0";
+
+    /// <summary>清理操作的 CLI 原始输出累积（不解析，原样展示）。</summary>
+    [ObservableProperty] public partial string CleanupOutput { get; set; } = "";
+    [ObservableProperty] public partial bool HasCleanupOutput { get; set; }
+
+    /// <summary>清理按钮可用性（忙碌时统一禁用，避免并发 prune）。</summary>
+    [ObservableProperty] public partial bool CanPrune { get; set; } = true;
+
+    // ---------------- 统计页实时采样（sparkline）----------------
+    // wslc stats 是一次性快照、不流式，所以"实时曲线"只能靠**定时轮询**自己攒历史。
+    // 历史按容器名分桶、每桶最多 MaxSamples 个点（环形丢弃最旧的）。
+
+    [ObservableProperty] public partial bool IsSampling { get; set; }
+    [ObservableProperty] public partial string SparkTargetName { get; set; } = "";
+    [ObservableProperty] public partial string SparkSummary { get; set; } = "";
+    [ObservableProperty] public partial PointCollection CpuSparkPoints { get; set; } = new();
+    [ObservableProperty] public partial PointCollection MemSparkPoints { get; set; } = new();
+
     // --- 错误 / 提示上屏（InfoBar）---
     [ObservableProperty] public partial bool IsInfoBarOpen { get; set; }
     [ObservableProperty] public partial string InfoMessage { get; set; } = "";
@@ -127,6 +157,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial bool IsVolumesPage { get; set; }
     [ObservableProperty] public partial bool IsStatsPage { get; set; }
     [ObservableProperty] public partial bool IsBuildPage { get; set; }
+    [ObservableProperty] public partial bool IsMaintenancePage { get; set; }
 
     [ObservableProperty] public partial string SearchText { get; set; } = "";
     [ObservableProperty] public partial string SortedColumn { get; set; } = "";
@@ -184,6 +215,8 @@ public partial class MainViewModel : ObservableObject
         HasSelectedContainer = value is not null;
         LogTarget = value?.Name ?? "";
         RecomputeCanStates();
+        // 曲线目标在没选中 stats 行时回退到容器列表的选中项，所以这里也要跟一次。
+        RebuildSparklines();
 
         // 切换选中即取消上一次的 inspect 拉取，避免延迟返回把上一选中
         // 的 Mounts 覆盖到新选中的实例。
@@ -311,6 +344,7 @@ public partial class MainViewModel : ObservableObject
         HasSelectedStat = value is not null;
         LogTarget = value?.Container ?? "";
         RecomputeCanStates();
+        RebuildSparklines();
     }
 
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
@@ -350,6 +384,12 @@ public partial class MainViewModel : ObservableObject
         IsVolumesPage = value == ResourcePage.Volumes;
         IsStatsPage = value == ResourcePage.Stats;
         IsBuildPage = value == ResourcePage.Build;
+        IsMaintenancePage = value == ResourcePage.Maintenance;
+        // 进维护页时重算占用/可回收计数（数字来自 Images/Containers 的当前内容，
+        // 而这两个集合可能在别的页面被就地合并过，光靠属性通知不可靠）。
+        if (value == ResourcePage.Maintenance) UpdateMaintenanceSummary();
+        // 离开统计页停采样：后台每 3 秒起一个 wslc 进程，不在该页时纯属浪费。
+        if (value != ResourcePage.Stats && IsSampling) StopSampling();
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
         SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
@@ -376,6 +416,7 @@ public partial class MainViewModel : ObservableObject
         CanCreateVolume = !IsBusy && !string.IsNullOrWhiteSpace(NewVolumeName);
         CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
         CanBuild = !IsBusy && !string.IsNullOrWhiteSpace(BuildContext) && !string.IsNullOrWhiteSpace(BuildTag);
+        CanPrune = !IsBusy;
         OnPropertyChanged(nameof(HasSelection));
     }
 
@@ -736,6 +777,7 @@ public partial class MainViewModel : ObservableObject
             Volumes = new ObservableCollection<VolumeInfo>(volumes);
 
             RebuildContainerView();
+            UpdateMaintenanceSummary();
 
             Status = $"已加载 {Containers.Count} 容器 / {Images.Count} 镜像 / {Networks.Count} 网络 / {Volumes.Count} 卷";
             IsInfoBarOpen = false;
@@ -1116,9 +1158,273 @@ public partial class MainViewModel : ObservableObject
         Networks = new ObservableCollection<NetworkInfo>(n);
     }
 
+    private async Task RefreshImagesAsync()
+    {
+        var i = await _client.ListImagesAsync(CurrentToken);
+        Images = new ObservableCollection<ImageInfo>(i);
+    }
+
     private async Task RefreshVolumesAsync()
     {
         var v = await _client.ListVolumesAsync(CurrentToken);
         Volumes = new ObservableCollection<VolumeInfo>(v);
+    }
+
+    // ---------------- 维护页：占用统计 + 一键清理 ----------------
+
+    /// <summary>
+    /// 重算维护页的四个数字。调用时点：进入维护页、主刷新成功后、每次清理之后。
+    /// **不做成派生属性**：<see cref="Images"/> 可能在别的页面被整体替换、
+    /// <see cref="Containers"/> 会被 <c>UpdateContainersInPlace</c> 就地改动内容
+    /// （集合实例不变 → 属性通知不触发），派生属性会读到陈旧计数。
+    /// </summary>
+    private void UpdateMaintenanceSummary()
+    {
+        long total = 0;
+        var unparsed = 0;
+        foreach (var img in Images)
+        {
+            if (SizeParser.TryParseBytes(img.Size, out var bytes)) total += bytes;
+            else unparsed++;
+        }
+
+        // 有解析不了的 SIZE（如 "N/A"）时加 "≥"，明示这是**下界**而不是精确合计。
+        ImageTotalSizeText = unparsed > 0 ? "≥" + SizeParser.Format(total) : SizeParser.Format(total);
+        ImageCountText = Images.Count.ToString(CultureInfo.InvariantCulture);
+        ReclaimableContainersText = Containers.Count(c => !c.IsRunning).ToString(CultureInfo.InvariantCulture);
+        NetworkVolumeCountText = $"{Networks.Count} / {Volumes.Count}";
+    }
+
+    /// <summary>容器单表刷新（prune 后用，不必拉全套）。</summary>
+    private async Task RefreshContainersAsync()
+    {
+        var c = await _client.ListContainersAsync(CurrentToken);
+        UpdateContainersInPlace(c);
+        RebuildContainerView();
+    }
+
+    /// <summary>最新的清理输出放在最上面：输出区不滚动时也能看到本次结果。</summary>
+    private void AppendCleanupOutput(string text)
+    {
+        CleanupOutput = CleanupOutput.Length == 0 ? text : text + "\n" + CleanupOutput;
+        HasCleanupOutput = true;
+    }
+
+    /// <summary>
+    /// 清理命令的共用骨架：确认 → 执行 → 原样记录 CLI 输出 → 刷新相关列表 → 重算占用。
+    /// 输出**不做解析**（回收量文案随版本/语言变化），原样透传，永不过期。
+    /// </summary>
+    private async Task RunPruneAsync(
+        string label,
+        string confirmTitle,
+        string confirmMessage,
+        System.Func<CancellationToken, Task<string>> op,
+        System.Func<Task>? refresh)
+    {
+        if (_dialogs is not null && !await _dialogs.ConfirmAsync(confirmTitle, confirmMessage))
+            return;
+
+        var ct = BeginOp();
+        IsBusy = true;
+        Status = $"清理{label}…";
+        try
+        {
+            var output = await op(ct);
+            var body = string.IsNullOrWhiteSpace(output) ? "（无输出）" : output.TrimEnd();
+            AppendCleanupOutput($"[{System.DateTime.Now:HH:mm:ss}] 清理{label}\n{body}\n");
+            if (refresh is not null) await refresh();
+            UpdateMaintenanceSummary();
+            Status = $"已清理{label}";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task PruneContainersAsync() => RunPruneAsync(
+        "已停止的容器",
+        "清理已停止的容器",
+        "将删除所有**已停止**的容器及其可写层 —— 落在容器可写层里的数据会丢失。\n" +
+        "挂载在卷或绑定目录中的数据不受影响，镜像也不会被删除。\n\n确定继续吗？",
+        ct => _client.PruneContainersAsync(ct),
+        RefreshContainersAsync);
+
+    [RelayCommand]
+    private Task PruneDanglingImagesAsync() => RunPruneAsync(
+        "悬空镜像",
+        "清理悬空镜像",
+        "将删除所有**悬空镜像**（没有标签、也没有任何容器引用的中间层）。\n" +
+        "带标签的镜像不会被删除。\n\n确定继续吗？",
+        ct => _client.PruneImagesAsync(false, ct),
+        RefreshImagesAsync);
+
+    [RelayCommand]
+    private Task PruneUnusedImagesAsync() => RunPruneAsync(
+        $"未使用的镜像（共 {ImageCountText} 个）",
+        "清理所有未使用的镜像",
+        "⚠️ 这是高风险操作：会删除**所有没有被容器引用**的镜像，**包括带标签的**。\n" +
+        "之后需要重新 pull 或重新 build 才能再用。\n\n确定继续吗？",
+        ct => _client.PruneImagesAsync(true, ct),
+        RefreshImagesAsync);
+
+    [RelayCommand]
+    private Task PruneNetworksAsync() => RunPruneAsync(
+        "未使用的网络",
+        "清理未使用的网络",
+        "将删除所有没有容器接入的网络。\n" +
+        "bridge / host / none 这三个内置网络不会被删除。\n\n确定继续吗？",
+        ct => _client.PruneNetworksAsync(ct),
+        RefreshNetworksAsync);
+
+    [RelayCommand]
+    private Task PruneVolumesAsync() => RunPruneAsync(
+        "未使用的卷",
+        "清理未使用的卷",
+        "⚠️ 这是高风险操作：会删除**所有没有被任何容器使用**的卷，**卷内的数据会一并销毁**。\n" +
+        "若某个卷只是「当前没有容器在跑」（例如数据库已停止），它同样会被删除。\n\n" +
+        "确定继续吗？",
+        ct => _client.PruneVolumesAsync(ct),
+        RefreshVolumesAsync);
+
+    // ---------------- 统计页实时采样（sparkline）----------------
+    // wslc stats 是**一次性快照、不流式**，所以"实时曲线"只能定时轮询自己攒历史。
+    // 历史按容器名分桶，每桶最多 MaxSamples 个点，超出丢最旧的。
+
+    private const int MaxSamples = 60;
+
+    /// <summary>
+    /// 曲线绘制区尺寸。必须与 XAML 里 <c>Polyline</c> 所在 Border 的内宽一致
+    /// （详情面板 340 − StackPanel Padding 16×2 − Border 描边 ≈ 308，留 12px 余量）。
+    /// Border 高 44、曲线画 36 留上下各 4 的内边距。
+    /// </summary>
+    private const double SparkWidth = 296;
+    private const double SparkHeight = 36;
+
+    private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(3);
+
+    private readonly Dictionary<string, List<double>> _cpuHistory = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<double>> _memHistory = new(StringComparer.Ordinal);
+    private DispatcherQueueTimer? _sampler;
+    private bool _samplingStarted; // 首帧立即出点，不留 3 秒空白
+
+    [RelayCommand]
+    private void ToggleSampling()
+    {
+        if (IsSampling) { StopSampling(); return; }
+        StartSampling();
+    }
+
+    private void StartSampling()
+    {
+        // DispatcherQueueTimer 必须在有 UI 调度队列的线程上创建；没有就明确报错，
+        // 不要假装在采样（否则用户会以为图停住了是数据问题）。
+        var queue = DispatcherQueue.GetForCurrentThread();
+        if (queue is null)
+        {
+            InfoMessage = "当前环境没有 UI 调度队列，无法启动实时采样。";
+            InfoSeverity = InfoBarSeverity.Warning;
+            IsInfoBarOpen = true;
+            return;
+        }
+
+        if (!_samplingStarted)
+        {
+            _sampler = queue.CreateTimer();
+            _sampler.Interval = SampleInterval;
+            _sampler.IsRepeating = true;
+            _sampler.Tick += async (_, _) => await SampleOnceAsync();
+            _samplingStarted = true;
+        }
+
+        _sampler!.Start();
+        IsSampling = true;
+        Status = $"实时采样中（每 {SampleInterval.TotalSeconds:0} 秒一次）";
+        _ = SampleOnceAsync(); // 立即取一次，不等第一个 tick
+    }
+
+    private void StopSampling()
+    {
+        _sampler?.Stop();
+        IsSampling = false;
+        Status = "已停止采样（已采到的历史保留在曲线上）";
+    }
+
+    private async Task SampleOnceAsync()
+    {
+        if (!IsSampling) return;
+        try
+        {
+            var snapshot = await _client.GetStatsSnapshotAsync(CancellationToken.None);
+            foreach (var s in snapshot)
+            {
+                // 表格路径来的 StatInfo 没有数值（HasNumbers=false），跳过而不是记 0 ——
+                // 记 0 会在曲线上画出一个假的"归零"。
+                if (!s.HasNumbers) continue;
+                Append(_cpuHistory, s.Container, s.CpuPercent);
+                Append(_memHistory, s.Container, s.MemUsedBytes / 1024d / 1024d); // 统一成 MB
+            }
+            RebuildSparklines();
+        }
+        catch (Exception ex)
+        {
+            // 采样是后台行为，失败不该反复弹 InfoBar：报一次 + 自动停采样。
+            ShowError(ex);
+            StopSampling();
+        }
+    }
+
+    private static void Append(Dictionary<string, List<double>> bucket, string key, double value)
+    {
+        if (!bucket.TryGetValue(key, out var list))
+        {
+            list = new List<double>(MaxSamples);
+            bucket[key] = list;
+        }
+        list.Add(value);
+        if (list.Count > MaxSamples) list.RemoveAt(0);
+    }
+
+    /// <summary>
+    /// 重画曲线。目标容器：优先统计页选中的行，回退到容器列表的选中项。
+    /// 两条曲线都**自动按本批最大值缩放**，因此图上的绝对高度本身没有意义 ——
+    /// 峰值数字放在 <see cref="SparkSummary"/> 里，避免读图误判。
+    /// </summary>
+    private void RebuildSparklines()
+    {
+        var target = SelectedStat?.Container;
+        if (string.IsNullOrEmpty(target)) target = SelectedContainer?.Name;
+        target ??= "";
+        SparkTargetName = target.Length == 0 ? "（未选中容器）" : target;
+
+        if (target.Length == 0 ||
+            !_cpuHistory.TryGetValue(target, out var cpu) || cpu.Count == 0 ||
+            !_memHistory.TryGetValue(target, out var mem) || mem.Count == 0)
+        {
+            CpuSparkPoints = new PointCollection();
+            MemSparkPoints = new PointCollection();
+            SparkSummary = target.Length == 0
+                ? "选中一个容器后开始采样。"
+                : "尚无采样数据 —— 点「开始采样」。";
+            return;
+        }
+
+        CpuSparkPoints = ToPoints(SparklineGeometry.Build(cpu, SparkWidth, SparkHeight));
+        MemSparkPoints = ToPoints(SparklineGeometry.Build(mem, SparkWidth, SparkHeight));
+        SparkSummary = $"CPU 峰值 {cpu.Max():0.0}% · 内存峰值 {SizeParser.Format((long)(mem.Max() * 1024 * 1024))} · 样本 {cpu.Count}";
+    }
+
+    private static PointCollection ToPoints(IReadOnlyList<(double X, double Y)> points)
+    {
+        var collection = new PointCollection();
+        foreach (var (x, y) in points)
+            collection.Add(new Windows.Foundation.Point(x, y));
+        return collection;
     }
 }

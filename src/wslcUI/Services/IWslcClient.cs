@@ -56,6 +56,12 @@ public interface IWslcClient
     /// <summary>Point-in-time resource usage snapshot (CLI bridge: `wslc stats`). wslc is one-shot by default; it rejects docker's `--no-stream` flag.</summary>
     Task<IReadOnlyList<StatInfo>> GetStatsAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// 数值形态的 resources 快照（CLI bridge: `wslc stats -a --format json`），供实时采样/曲线用。
+    /// 与 <see cref="GetStatsAsync"/> 的区别只有路径：这个走 JSON 拿可计算的数值。
+    /// </summary>
+    Task<IReadOnlyList<StatInfo>> GetStatsSnapshotAsync(CancellationToken ct = default);
+
     /// <summary>Lists networks (CLI bridge: `wslc network list`).</summary>
     Task<IReadOnlyList<NetworkInfo>> ListNetworksAsync(CancellationToken ct = default);
 
@@ -81,4 +87,50 @@ public interface IWslcClient
     /// 调用方（详情面板）选中容器时按需拉取，避免 Refresh 主路径 N+1。
     /// </summary>
     Task<IReadOnlyList<ContainerMount>> InspectContainerAsync(string name, CancellationToken ct = default);
+
+    // ---------------- 清理（维护页）----------------
+    // 四个 prune 都是 CLI 桥接（SDK 3.0.1 无对应投影）。
+    // 一律带 `-f`：不带会弹交互式确认并挂住子进程（wslc 已对齐 docker 语义）。
+    // 返回值是 CLI 的**原始输出**，UI 直接展示而不解析——prune 的回收量文案
+    // 各家版本不同，解析会随版本漂移；原样透传永不过期。
+
+    /// <summary>清理所有已停止的容器（CLI bridge: `wslc container prune -f`）。</summary>
+    Task<string> PruneContainersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// 清理镜像（CLI bridge: `wslc image prune -f [-a]`）。
+    /// <paramref name="all"/> 为 false 只删悬空镜像；为 true 删所有未被容器使用的镜像。
+    /// </summary>
+    Task<string> PruneImagesAsync(bool all, CancellationToken ct = default);
+
+    /// <summary>清理所有未被使用的网络（CLI bridge: `wslc network prune -f`）。</summary>
+    Task<string> PruneNetworksAsync(CancellationToken ct = default);
+
+    /// <summary>清理所有未被使用的卷（CLI bridge: `wslc volume prune -f`）。**会销毁卷内数据**。</summary>
+    Task<string> PruneVolumesAsync(CancellationToken ct = default);
+
+    // ---------------- 容器内文件系统（文件浏览窗口）----------------
+    // 全部 CLI 桥接：SDK 3.0.1 没有文件系统投影。
+
+    /// <summary>列出容器内某个目录（CLI bridge: `wslc exec &lt;ctr&gt; ls -la &lt;path&gt;`）。</summary>
+    Task<IReadOnlyList<ContainerFileEntry>> ListDirectoryAsync(
+        string container, string path, CancellationToken ct = default);
+
+    /// <summary>从容器复制文件/目录到宿主（CLI bridge: `wslc container cp &lt;ctr&gt;:&lt;path&gt; &lt;local&gt;`）。目标可不存在。</summary>
+    Task CopyFromContainerAsync(
+        string container, string containerPath, string localPath, CancellationToken ct = default);
+
+    /// <summary>
+    /// 从宿主复制到容器（CLI bridge: `wslc container cp &lt;local&gt; &lt;ctr&gt;:&lt;dir&gt;/`）。
+    /// ⚠️ <paramref name="containerDir"/> 必须是容器内**已存在的目录**，且**不能指定目标文件名**
+    /// （沿用本地文件名）—— wslc 的 cp 与 docker 语义不同，实测 2026-10-02。
+    /// </summary>
+    Task CopyToContainerAsync(
+        string container, string localPath, string containerDir, CancellationToken ct = default);
+
+    /// <summary>
+    /// 删除容器内的一个路径（CLI bridge: `wslc exec &lt;ctr&gt; rm -rf &lt;path&gt;`）。
+    /// **递归且不可撤销** —— 调用方必须先确认。
+    /// </summary>
+    Task DeletePathAsync(string container, string path, CancellationToken ct = default);
 }
