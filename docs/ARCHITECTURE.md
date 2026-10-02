@@ -37,7 +37,7 @@ SDK 对象模型(Microsoft.WSL.Containers):
 │   - MainWindow: NavigationView 三栏          │
 │     (侧栏 220 + 内容 + 详情面板 340          │
 │     + 日志抽屉 + 状态栏)                     │
-│     7 page：容器/镜像/网络/卷/统计/构建/维护   │
+│     9 page：容器/镜像/网络/卷/统计/构建/维护/端点/活动 │
 ├─────────────────────────────────────────────┤
 │ ViewModel  MVVM (CommunityToolkit.Mvvm)      │  ObservableObject / RelayCommand
 │   - MainViewModel: 状态、命令、集合绑定        │
@@ -114,7 +114,7 @@ GA 后仍可能有破坏性变更,升级时先比对
 | `dotnet build wslcUI.sln -c Debug` | 0 错误 0 警告（含 tools 下的 ConPtyProbe / wslcUI.Verify） |
 | `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release` | 0 错误 0 警告 |
 | `dotnet test tests/wslcUI.Tests/wslcUI.Tests.csproj -p:Platform=x64 -c Debug` | 全部通过 |
-| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 9 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
+| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 13 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
 
 - **单元测试**覆盖：CLI 表格与 JSON 解析器（`Services/TableParserTests.cs`，以真机
   `wslc` 输出原文为夹具）、错误码中文映射、用户设置持久化、卷→容器反转映射、

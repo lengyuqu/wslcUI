@@ -18,7 +18,7 @@ using WinRT.Interop;
 
 namespace wslcUI.ViewModels;
 
-/// <summary>左侧导航的七个页面。替换原先平铺的 Pivot。</summary>
+/// <summary>左侧导航的九个页面。替换原先平铺的 Pivot。</summary>
 public enum ResourcePage
 {
     Containers,
@@ -28,6 +28,8 @@ public enum ResourcePage
     Stats,
     Build,
     Maintenance,
+    Endpoints,
+    Events,
 }
 
 public partial class MainViewModel : ObservableObject
@@ -106,6 +108,444 @@ public partial class MainViewModel : ObservableObject
     /// <summary>清理按钮可用性（忙碌时统一禁用，避免并发 prune）。</summary>
     [ObservableProperty] public partial bool CanPrune { get; set; } = true;
 
+    // ---------------- 端点面板（已发布端口汇总）----------------
+    // 对标 Docker Desktop 的 Endpoints 面板：把**所有运行中容器**已发布到宿主
+    // 的端口聚成一张表，一键复制 / 打开浏览器。数据来自容器行的 Ports 字符串，
+    // 经 Services/EndpointParser.cs 纯函数解析（可单测），不额外调 CLI。
+
+    [ObservableProperty] public partial ObservableCollection<EndpointInfo> Endpoints { get; set; } = new();
+
+    [ObservableProperty] public partial bool HasEndpoints { get; set; }
+
+    /// <summary>端点总数文本（指标卡用）。</summary>
+    public string EndpointCountText => Endpoints.Count.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>是否有绑定到非回环地址的端点（局域网可访问）——决定是否显示提醒。</summary>
+    public bool HasNonLoopbackEndpoint => Endpoints.Any(e => !e.IsLoopback);
+
+    /// <summary>非回环端点的提示文案，无则空串。</summary>
+    public string NonLoopbackHint => HasNonLoopbackEndpoint
+        ? "有端点绑定在 0.0.0.0，局域网内其他设备也能访问。"
+        : "";
+
+    // ---------------- 批量操作（Select 模式）----------------
+    // 竞品（WSL Container Desktop）的 Select 模式：列表进入多选后批量启停/删除。
+    // 选中集合用 HashSet<string>（存**名称**而非对象引用）：列表刷新会就地
+    // 合并容器实例（见 UpdateContainersInPlace），存引用会因实例替换而失效。
+
+    [ObservableProperty] public partial bool IsSelectMode { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedCountText))]
+    [NotifyPropertyChangedFor(nameof(HasSelectionForBulk))]
+    [NotifyPropertyChangedFor(nameof(CanBulkStart))]
+    [NotifyPropertyChangedFor(nameof(CanBulkStop))]
+    [NotifyPropertyChangedFor(nameof(CanBulkDelete))]
+    public partial HashSet<string> SelectedNames { get; set; } = new();
+
+    /// <summary>已选数量文本（Select 模式工具条用）。</summary>
+    public string SelectedCountText => SelectedNames.Count.ToString(CultureInfo.InvariantCulture);
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedCountText))]
+    [NotifyPropertyChangedFor(nameof(HasSelectionForBulk))]
+    [NotifyPropertyChangedFor(nameof(CanBulkStart))]
+    [NotifyPropertyChangedFor(nameof(CanBulkStop))]
+    [NotifyPropertyChangedFor(nameof(CanBulkDelete))]
+    public partial bool HasSelectionForBulk { get; set; }
+
+    [ObservableProperty] public partial bool CanBulkStart { get; set; }
+    [ObservableProperty] public partial bool CanBulkStop { get; set; }
+    [ObservableProperty] public partial bool CanBulkDelete { get; set; }
+
+    // ---------------- 活动流（wslc events 实时流）----------------
+    // 与统计页的 3 秒轮询不同：事件流由 wslc 主动推送，容器启停/网络变更
+    // 发生的瞬间就能拿到，不必等下一轮轮询。
+    //
+    // ⚠️ 事件流是**永不结束**的长驻进程（实测：带 --since 也不自行退出，
+    // 退出码 124 = 被 timeout 杀），所以：① 绝不 ReadToEndAsync；
+    // ② 离开本页必须 Stop()，否则会留下一个常驻 wslc 进程。
+    // 详见 Services/EventStreamService.cs 类注释。
+
+    [ObservableProperty] public partial ObservableCollection<ContainerEvent> Events { get; set; } = new();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ActivitySummary))]
+    [NotifyPropertyChangedFor(nameof(EventStreamButtonText))]
+    public partial bool IsEventStreamRunning { get; set; }
+
+    [ObservableProperty] public partial bool HasEvents { get; set; }
+
+    /// <summary>事件总数（受 MaxEvents 环形上限约束，故为「最近 N 条」）。</summary>
+    public string EventCountText => Events.Count.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>工具条上的状态摘要。</summary>
+    public string ActivitySummary => IsEventStreamRunning
+        ? $"监听中 · 最近 {Events.Count} 条"
+        : (Events.Count > 0 ? $"已停止 · 留存 {Events.Count} 条" : "未开始监听");
+
+    /// <summary>开始/停止按钮的文案（随运行状态切换）。</summary>
+    public string EventStreamButtonText => IsEventStreamRunning ? "停止监听" : "开始监听";
+
+    // 事件列表的环形上限：长驻监听下无界增长会吃爆内存。
+    private const int MaxEvents = 500;
+
+    private readonly EventStreamService _eventStream = new();
+
+    /// <summary>
+    /// UI 线程的调度队列，在 <see cref="StartEventStream"/>（跑在 UI 线程上）时捕获。
+    /// 事件回调来自 wslc 子进程的读取线程，那里 <c>GetForCurrentThread()</c> 返回
+    /// null —— 必须提前存住 UI 队列才能把事件 marshal 回去。
+    /// </summary>
+    private Microsoft.UI.Dispatching.DispatcherQueue? _uiQueue;
+
+    /// <summary>开始/停止事件流。进活动页自动开始，离开自动停止。</summary>
+    [RelayCommand]
+    private void ToggleEventStream()
+    {
+        if (_eventStream.IsRunning) StopEventStream();
+        else StartEventStream();
+    }
+
+    private void StartEventStream(string? since = null)
+    {
+        if (_eventStream.IsRunning) return;
+
+        // 事件回调在后台线程，必须先抓住 UI 队列（见 _uiQueue 注释）。
+        _uiQueue ??= Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        if (_uiQueue is null)
+        {
+            InfoMessage = "当前环境没有 UI 调度队列，无法监听事件。";
+            InfoSeverity = InfoBarSeverity.Warning;
+            IsInfoBarOpen = true;
+            return;
+        }
+
+        _eventStream.EventReceived += OnEventReceived;
+        _eventStream.ErrorReceived += OnEventStreamError;
+        _eventStream.Exited += OnEventStreamExited;
+        try
+        {
+            _eventStream.Start(since);
+            IsEventStreamRunning = true;
+            Status = "正在监听容器事件…";
+        }
+        catch (System.Exception ex)
+        {
+            StopEventStream();
+            ShowError(ex);
+        }
+    }
+
+    private void StopEventStream()
+    {
+        _eventStream.EventReceived -= OnEventReceived;
+        _eventStream.ErrorReceived -= OnEventStreamError;
+        _eventStream.Exited -= OnEventStreamExited;
+        _eventStream.Stop();
+        IsEventStreamRunning = false;
+        OnPropertyChanged(nameof(ActivitySummary));
+    }
+
+    /// <summary>
+    /// 事件回调来自后台线程（wslc 进程的 stdout 读取线程），
+    /// 必须切回 UI 线程才能动 ObservableCollection。
+    /// </summary>
+    private void OnEventReceived(object? sender, ContainerEvent e)
+    {
+        var q = _uiQueue;
+        if (q is null) return;
+        if (q.HasThreadAccess) AppendEvent(e);
+        else q.TryEnqueue(() => AppendEvent(e));
+    }
+
+    private void AppendEvent(ContainerEvent e)
+    {
+        // 最新的排在最上面，与「刚发生的事最该被看到」一致。
+        Events.Insert(0, e);
+        while (Events.Count > MaxEvents) Events.RemoveAt(Events.Count - 1);
+        HasEvents = Events.Count > 0;
+        OnPropertyChanged(nameof(EventCountText));
+        OnPropertyChanged(nameof(ActivitySummary));
+    }
+
+    private void OnEventStreamError(object? sender, string message)
+    {
+        var q = _uiQueue;
+        if (q is null) return;
+        void Show()
+        {
+            InfoMessage = $"事件流出错：{message}";
+            InfoSeverity = InfoBarSeverity.Warning;
+            IsInfoBarOpen = true;
+        }
+        if (q.HasThreadAccess) Show(); else q.TryEnqueue(Show);
+    }
+
+    private void OnEventStreamExited(object? sender, int exitCode)
+    {
+        var q = _uiQueue;
+        if (q is null) return;
+        void Show()
+        {
+            IsEventStreamRunning = false;
+            InfoMessage = $"事件流已退出（exit {exitCode}）。可点「开始监听」重新开始。";
+            InfoSeverity = InfoBarSeverity.Informational;
+            IsInfoBarOpen = true;
+        }
+        if (q.HasThreadAccess) Show(); else q.TryEnqueue(Show);
+    }
+
+    [RelayCommand]
+    private void ClearEvents()
+    {
+        Events.Clear();
+        HasEvents = false;
+        OnPropertyChanged(nameof(EventCountText));
+        OnPropertyChanged(nameof(ActivitySummary));
+    }
+
+    // ---------------- 镜像仓库与出向操作（push / tag / 登录）----------------
+    // 此前镜像页只能「进」（pull）不能「出」（push），闭环缺失。密码一律走
+    // IWslcClient.RegistryLoginAsync 的 --password-stdin 通道，**不存盘、不进日志**。
+
+    [ObservableProperty] public partial string RegistryServer { get; set; } = "";
+    [ObservableProperty] public partial string RegistryUser { get; set; } = "";
+    [ObservableProperty] public partial string TagTarget { get; set; } = "";
+
+    [ObservableProperty] public partial bool CanPushImage { get; set; }
+    [ObservableProperty] public partial bool CanTagImage { get; set; }
+
+    /// <summary>登录结果提示（不显示密码）。</summary>
+    [ObservableProperty] public partial string RegistryStatusText { get; set; } = "";
+
+    [ObservableProperty] public partial string PushOutput { get; set; } = "";
+    [ObservableProperty] public partial bool HasPushOutput { get; set; }
+
+    [ObservableProperty] public partial string ContainerExportPath { get; set; } = "";
+
+    /// <summary>
+    /// 登录镜像仓库。密码通过回调交给 UI 层读取（PasswordBox 无法双向绑定），
+    /// 拿完即丢 —— 不进 ViewModel 状态、不写盘、不进日志。
+    /// </summary>
+    public Func<string?>? PromptPassword { get; set; }
+
+    [RelayCommand]
+    private async Task RegistryLoginAsync()
+    {
+        if (_dialogs is not null && !await _dialogs.ConfirmAsync(
+                "登录镜像仓库",
+                $"将以用户「{(string.IsNullOrWhiteSpace(RegistryUser) ? "<空>" : RegistryUser)}」" +
+                $"登录{(string.IsNullOrWhiteSpace(RegistryServer) ? "默认服务器" : RegistryServer)}。密码只经 stdin 传入，不保存。"))
+            return;
+
+        var password = PromptPassword?.Invoke();
+        if (string.IsNullOrEmpty(password))
+        {
+            InfoMessage = "未输入密码，已取消登录。";
+            InfoSeverity = InfoBarSeverity.Informational;
+            IsInfoBarOpen = true;
+            return;
+        }
+
+        var ct = BeginOp();
+        IsBusy = true;
+        try
+        {
+            await _client.RegistryLoginAsync(
+                string.IsNullOrWhiteSpace(RegistryServer) ? null : RegistryServer.Trim(),
+                string.IsNullOrWhiteSpace(RegistryUser) ? null : RegistryUser.Trim(),
+                password, ct);
+            password = null; // 尽早脱离本方法的局部变量
+            RegistryStatusText = $"已登录 {RegistryServer}";
+            Status = "仓库登录成功";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task RegistryLogoutAsync()
+    {
+        var ct = BeginOp();
+        IsBusy = true;
+        try
+        {
+            await _client.RegistryLogoutAsync(
+                string.IsNullOrWhiteSpace(RegistryServer) ? null : RegistryServer.Trim(), ct);
+            RegistryStatusText = "已注销";
+            Status = "仓库已注销";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task PushImageAsync()
+    {
+        if (SelectedImage is null) return;
+        var reference = SelectedImage.Reference;
+        if (string.IsNullOrWhiteSpace(reference))
+        {
+            InfoMessage = "该镜像没有可用的引用（reference 为空），无法推送。";
+            InfoSeverity = InfoBarSeverity.Warning;
+            IsInfoBarOpen = true;
+            return;
+        }
+
+        if (_dialogs is not null && !await _dialogs.ConfirmAsync(
+                "推送镜像", $"将 {reference} 推送到镜像仓库。未登录的仓库会失败。"))
+            return;
+
+        var ct = BeginOp();
+        IsBusy = true;
+        Status = $"正在推送 {reference}…";
+        PushOutput = "";
+        HasPushOutput = true;
+        try
+        {
+            var progress = new Progress<string>(line =>
+                PushOutput = AppendLine(PushOutput, line));
+            await _client.PushImageAsync(reference, allTags: false, quiet: false, progress, ct);
+            Status = $"已推送 {reference}";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            PushOutput = AppendLine(PushOutput, $"失败：{ex.Message}");
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task TagImageAsync()
+    {
+        if (SelectedImage is null) return;
+        var target = TagTarget.Trim();
+        if (string.IsNullOrEmpty(target))
+        {
+            InfoMessage = "请先填写目标标签（如 registry.example.com/app:v1）。";
+            InfoSeverity = InfoBarSeverity.Informational;
+            IsInfoBarOpen = true;
+            return;
+        }
+
+        var ct = BeginOp();
+        IsBusy = true;
+        try
+        {
+            await _client.TagImageAsync(SelectedImage.Reference, target, ct);
+            await RefreshImagesAsync();
+            Status = $"已打标签 {target}";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private static string AppendLine(string text, string line) =>
+        string.IsNullOrEmpty(text) ? line : text + "\n" + line;
+
+    [RelayCommand]
+    private async Task KillContainerAsync()
+    {
+        if (SelectedContainer is null) return;
+        var name = SelectedContainer.Name;
+        if (_dialogs is not null && !await _dialogs.ConfirmAsync(
+                "强制终止容器",
+                $"SIGKILL 不会给 {name} 里的进程清理机会，未落盘的数据会丢失。确定继续？"))
+            return;
+
+        var ct = BeginOp();
+        IsBusy = true;
+        try
+        {
+            await _client.KillContainerAsync(name, null, ct);
+            await RefreshContainersAsync();
+            Status = $"已强制终止 {name}";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportContainerAsync()
+    {
+        if (SelectedContainer is null) return;
+        var name = SelectedContainer.Name;
+
+        var path = PickSavePath($"wslcui-{name}.tar");
+        if (string.IsNullOrEmpty(path)) return;
+
+        var ct = BeginOp();
+        IsBusy = true;
+        Status = $"正在导出 {name}…";
+        try
+        {
+            await _client.ExportContainerAsync(name, path, ct);
+            ContainerExportPath = path;
+            Status = $"已导出到 {path}";
+            IsInfoBarOpen = false;
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// 弹出保存对话框并返回用户选中的路径；取消返回空串。
+    /// 与 <c>PickContextDirectory</c> 同一套 OwnerHandle 父窗口处理。
+    /// </summary>
+    private string? PickSavePath(string suggestedName)
+    {
+        var picker = new Windows.Storage.Pickers.FileSavePicker
+        {
+            SuggestedFileName = suggestedName,
+        };
+        picker.FileTypeChoices.Add("Tar 归档", new List<string> { ".tar" });
+        // OwnerHandle 是 Intptr（值类型），恒非 null；为 0 表示还没被 MainWindow 注入，
+        // 此时跳过 Initialize，picker 会以默认（无父窗口）方式弹出。
+        if (OwnerHandle != IntPtr.Zero)
+            InitializeWithWindow.Initialize(picker, OwnerHandle);
+        return picker.PickSaveFileAsync()?.GetAwaiter().GetResult()?.Path;
+    }
+
     // ---------------- 统计页实时采样（sparkline）----------------
     // wslc stats 是一次性快照、不流式，所以"实时曲线"只能靠**定时轮询**自己攒历史。
     // 历史按容器名分桶、每桶最多 MaxSamples 个点（环形丢弃最旧的）。
@@ -158,6 +598,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial bool IsStatsPage { get; set; }
     [ObservableProperty] public partial bool IsBuildPage { get; set; }
     [ObservableProperty] public partial bool IsMaintenancePage { get; set; }
+    [ObservableProperty] public partial bool IsEndpointsPage { get; set; }
+    [ObservableProperty] public partial bool IsEventsPage { get; set; }
 
     [ObservableProperty] public partial string SearchText { get; set; } = "";
     [ObservableProperty] public partial string SortedColumn { get; set; } = "";
@@ -385,9 +827,18 @@ public partial class MainViewModel : ObservableObject
         IsStatsPage = value == ResourcePage.Stats;
         IsBuildPage = value == ResourcePage.Build;
         IsMaintenancePage = value == ResourcePage.Maintenance;
+        IsEndpointsPage = value == ResourcePage.Endpoints;
+        IsEventsPage = value == ResourcePage.Events;
         // 进维护页时重算占用/可回收计数（数字来自 Images/Containers 的当前内容，
         // 而这两个集合可能在别的页面被就地合并过，光靠属性通知不可靠）。
         if (value == ResourcePage.Maintenance) UpdateMaintenanceSummary();
+        // 端点面板同样依赖容器的 Ports 列：容器在别的页面被就地合并过时
+        // 面板不会自动跟着重算，进页时按当前集合重算一次。
+        if (value == ResourcePage.Endpoints) RebuildEndpoints();
+        // 进活动页开流、离开立刻关流：事件流是**永不退出**的长驻 wslc 进程，
+        // 不关就会一直占着一个子进程 + 管道，与统计页的采样同理。
+        if (value == ResourcePage.Events) StartEventStream();
+        else if (IsEventStreamRunning) StopEventStream();
         // 离开统计页停采样：后台每 3 秒起一个 wslc 进程，不在该页时纯属浪费。
         if (value != ResourcePage.Stats && IsSampling) StopSampling();
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
@@ -778,6 +1229,8 @@ public partial class MainViewModel : ObservableObject
 
             RebuildContainerView();
             UpdateMaintenanceSummary();
+            RebuildEndpoints();
+            UpdateBulkStates();
 
             Status = $"已加载 {Containers.Count} 容器 / {Images.Count} 镜像 / {Networks.Count} 网络 / {Volumes.Count} 卷";
             IsInfoBarOpen = false;
@@ -1195,12 +1648,220 @@ public partial class MainViewModel : ObservableObject
         NetworkVolumeCountText = $"{Networks.Count} / {Volumes.Count}";
     }
 
+    /// <summary>
+    /// 重建端点面板：遍历**运行中**容器，把 Ports 列解析成端点行。
+    /// 已停止容器的端口列本就是空，且它们的端口不再真正监听，排除掉更符合直觉。
+    /// 解析是纯函数（EndpointParser），脏端口列只会被跳过，不会中断刷新。
+    /// </summary>
+    private void RebuildEndpoints()
+    {
+        var list = new List<EndpointInfo>();
+        // 按容器名排序，端口再按宿主端口排 —— 否则 RefreshAsync 的集合顺序
+        // 变化会让面板行乱跳（同一批端点每次刷新位置不同）。
+        foreach (var c in Containers.Where(c => c.IsRunning)
+                                    .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            list.AddRange(EndpointParser.Parse(c.Ports, c.Name));
+        }
+
+        var sorted = list
+            .OrderBy(e => e.ContainerName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.HostPort)
+            .ToList();
+
+        Endpoints = new ObservableCollection<EndpointInfo>(sorted);
+        HasEndpoints = Endpoints.Count > 0;
+        OnPropertyChanged(nameof(EndpointCountText));
+        OnPropertyChanged(nameof(HasNonLoopbackEndpoint));
+        OnPropertyChanged(nameof(NonLoopbackHint));
+    }
+
+    // ---------------- 批量操作（Select 模式）----------------
+
+    /// <summary>进入/退出 Select 模式。退出时清空选择，避免下次进入残留上次的勾选。</summary>
+    [RelayCommand]
+    private void ToggleSelectMode()
+    {
+        IsSelectMode = !IsSelectMode;
+        if (!IsSelectMode) SetBulkSelection(Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// 把外部（ListView 多选）给定的选中名同步成批量操作的选中集合。
+    /// 唯一入口 —— 勾选框、全选、批量动作后的重算都走这里，
+    /// 避免 SelectedNames 与 UI 选中状态各持一份、互相打脸。
+    /// </summary>
+    public void SetBulkSelection(IEnumerable<string> names)
+    {
+        SelectedNames = new HashSet<string>(names, StringComparer.Ordinal);
+        UpdateBulkStates();
+    }
+
+    [RelayCommand]
+    private void SelectAllVisible()
+    {
+        SetBulkSelection(FilteredContainers.Select(c => c.Name));
+    }
+
+    [RelayCommand]
+    private void ClearSelection()
+    {
+        SetBulkSelection(Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// 批量动作的公共骨架：逐个跑单容器动作，**单个失败不中断其余**，
+    /// 最后汇总成功/失败计数。全部失败时才弹错误条（部分成功也给，
+    /// 但文案区分，避免用户以为全成了）。
+    /// </summary>
+    private async Task RunBulkAsync(
+        string label,
+        string confirmTitle,
+        string confirmMessage,
+        Func<string, CancellationToken, Task> op)
+    {
+        var targets = SelectedNames.ToList();
+        if (targets.Count == 0) return;
+
+        if (_dialogs is not null && !await _dialogs.ConfirmAsync(confirmTitle, confirmMessage))
+            return;
+
+        var ct = BeginOp();
+        IsBusy = true;
+        var ok = 0;
+        var failed = new List<string>();
+        try
+        {
+            foreach (var name in targets)
+            {
+                try
+                {
+                    await op(name, ct);
+                    ok++;
+                }
+                catch (System.OperationCanceledException)
+                {
+                    throw; // 用户取消：立即中止，不记为失败
+                }
+                catch (System.Exception ex)
+                {
+                    // 逐项容错：一个容器失败（如已被删）不该让整批停下来。
+                    failed.Add($"{name}：{ex.Message}");
+                }
+            }
+
+            await RefreshContainersAsync();
+            RebuildEndpoints();
+            UpdateBulkStates();
+
+            Status = failed.Count == 0
+                ? $"已{label} {ok} 个容器"
+                : $"已{label} {ok} 个，{failed.Count} 个失败";
+            IsInfoBarOpen = false;
+            if (failed.Count > 0)
+            {
+                InfoMessage = $"部分{label}失败：\n" + string.Join("\n", failed.Take(5));
+                if (failed.Count > 5) InfoMessage += $"\n…另有 {failed.Count - 5} 个";
+                InfoSeverity = InfoBarSeverity.Warning;
+                IsInfoBarOpen = true;
+            }
+        }
+        catch (System.Exception ex)
+        {
+            ShowError(ex);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private Task BulkStartAsync() => RunBulkAsync(
+        "启动",
+        "批量启动",
+        $"确定启动选中的 {SelectedNames.Count} 个容器？",
+        (name, ct) => _client.StartAsync(name, ct));
+
+    [RelayCommand]
+    private Task BulkStopAsync() => RunBulkAsync(
+        "停止",
+        "批量停止",
+        $"确定停止选中的 {SelectedNames.Count} 个容器？",
+        (name, ct) => _client.StopAsync(name, ct));
+
+    [RelayCommand]
+    private Task BulkDeleteAsync() => RunBulkAsync(
+        "删除",
+        "批量删除",
+        $"确定**删除**选中的 {SelectedNames.Count} 个容器？此操作不可撤销。",
+        (name, ct) => _client.DeleteContainerAsync(name, ct));
+
+    /// <summary>
+    /// 勾选变化后重算按钮可用性。启动要求「选中里至少有一个已停止的」，
+    /// 停止要求「至少有一个运行中」—— 没符合条件的项就禁用，避免点了必然报错。
+    /// </summary>
+    private void UpdateBulkStates()
+    {
+        var picked = Containers.Where(c => SelectedNames.Contains(c.Name)).ToList();
+        HasSelectionForBulk = picked.Count > 0;
+        CanBulkStart = picked.Any(c => !c.IsRunning);
+        CanBulkStop = picked.Any(c => c.IsRunning);
+        CanBulkDelete = picked.Count > 0;
+    }
+
+    /// <summary>
+    /// 端点动作的外部回调。ViewModel 不直接引用 WinRT 的 Clipboard / Launcher
+    /// —— 那会让它无法单测，也把平台依赖拉进纯逻辑层。由 MainWindow 注入。
+    /// </summary>
+    public Action<string>? CopyText { get; set; }
+
+    public Action<string>? OpenUrl { get; set; }
+
+    /// <summary>把选中端点的地址复制到剪贴板（端点行右键/按钮）。</summary>
+    [RelayCommand]
+    private void CopyEndpoint(EndpointInfo? endpoint)
+    {
+        if (endpoint is null) return;
+        var target = endpoint.Url.Length > 0 ? endpoint.Url : endpoint.Summary;
+        CopyText?.Invoke(target);
+        Status = $"已复制 {target}";
+    }
+
+    /// <summary>用系统默认浏览器打开端点。UDP 端点没有可打开的 URL，直接拒绝并说明。</summary>
+    [RelayCommand]
+    private void OpenEndpoint(EndpointInfo? endpoint)
+    {
+        if (endpoint is null) return;
+        if (endpoint.Url.Length == 0)
+        {
+            InfoMessage = $"{endpoint.Summary} 是 UDP 端口，没有可打开的地址。";
+            InfoSeverity = InfoBarSeverity.Informational;
+            IsInfoBarOpen = true;
+            return;
+        }
+        OpenUrl?.Invoke(endpoint.Url);
+        Status = $"已在浏览器打开 {endpoint.Url}";
+    }
+
+    /// <summary>把宿主的 IP:端口 部分复制出来（不含协议，方便拼到别的工具里）。</summary>
+    [RelayCommand]
+    private void CopyEndpointAddress(EndpointInfo? endpoint)
+    {
+        if (endpoint is null) return;
+        var target = $"{endpoint.HostIp}:{endpoint.HostPort}";
+        CopyText?.Invoke(target);
+        Status = $"已复制 {target}";
+    }
+
     /// <summary>容器单表刷新（prune 后用，不必拉全套）。</summary>
     private async Task RefreshContainersAsync()
     {
         var c = await _client.ListContainersAsync(CurrentToken);
         UpdateContainersInPlace(c);
         RebuildContainerView();
+        RebuildEndpoints();
+        UpdateBulkStates();
     }
 
     /// <summary>最新的清理输出放在最上面：输出区不滚动时也能看到本次结果。</summary>

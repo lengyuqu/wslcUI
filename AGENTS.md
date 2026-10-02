@@ -54,7 +54,7 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 | `dotnet build wslcUI.sln -c Debug` | 0 错误 0 警告。sln 含 4 个项目：`src/wslcUI`、`tests/wslcUI.Tests`、`tools/ConPtyProbe`、`tools/wslcUI.Verify` |
 | `dotnet build src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release` | 0 错误 0 警告（Debug 过不代表 Release 过） |
 | `dotnet test tests/wslcUI.Tests/wslcUI.Tests.csproj -p:Platform=x64 -c Debug` | 全部通过 |
-| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 9 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
+| `dotnet run --project tools/wslcUI.Verify -p:Platform=x64 -c Debug` | 13 PASS / 0 FAIL；V5~V7 在本机 ConPTY 系统故障下记 NA（非代码问题） |
 
 - `tools/XTermNetSpike` 是 P4-R2 选型 spike（已完成），**刻意未纳入 sln**，需要时单独 `dotnet run --project`。
 - 单测覆盖纯逻辑（CLI 表格/JSON 解析器、错误码映射、反转映射、键盘映射、VT 剥离、设置持久化）；
@@ -257,6 +257,29 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 - **CLI 解析器已联调并有回归保护**：`WslcCli` 各解析器（`ParseContainerList` / `ParseNetworkList` / `ParseVolumeListJson` / `ParseStats` / `ParseImageList`）的真机输出列格式已核对（verify V2.1~V2.5），且 `TableParserTests` 以真机输出原文为夹具做单元回归；`wslc start/stop <name>` 非零退出抛异常已就位。
 - **`WslcCli` 的两条约定不要回退**：① `RunAsync` 必须**并发**排空 stdout/stderr（两个 `ReadToEndAsync` 先启动再 `Task.WhenAll`）——串行 `await` 会在子进程写满 stderr 管道缓冲（4 KB）时双向等待死锁；② `ExePath` 走三级解析（环境变量 `WSLCUI_WSLC_EXE` → `C:\Program Files\WSL\wslc.exe` → PATH 扫描），**不要改回硬编码常量**，否则 wslc 装在非默认位置时整组 CLI 桥接失效、且报错文案误导成「请先安装 WSL」。`BuildImageAsync` 与 `RunAsync` 共用 `EnsureExe()` 前置守卫。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
+- **⚠️ `wslc events` 永不退出（2026-10-02 实测，两个坑一起记）**：
+  ① **带 `--since` 也不自行退出** —— 它只是「先补历史再继续挂在 stdout 等新事件」，
+  `timeout` 杀它得到退出码 124。**绝不能 `ReadToEndAsync`**（永久挂死；本项目第一次跑
+  verify 就因此挂了 3 分 44 秒）。历史回读用 `WslcCli.ListEventsAsync` 的
+  「逐行异步读 + 空闲 400ms 即止」；长驻监听用 `EventStreamService`
+  （`OutputDataReceived` + `BeginOutputReadLine`），离开页面必须 `Stop()`。
+  ② `timeout N wslc events > file` **读到 0 行**（管道缓冲），同一命令用
+  `OutputDataReceived` 逐行读立刻拿到数据 —— **这是 shell 管道问题，不是 wslc 缺陷**，
+  别据此误判「事件流是坏的」。
+- **⚠️ 事件行的 `value` 里含逗号**：`(image=nginx, maintainer=NGINX Docker Maintainers <docker-maint@nginx.com>, name=x)`
+  —— 不能按逗号 split。`EventLineParser` 按「行首或逗号后紧跟的合法 `key=`」正则定位边界。
+  另：时间戳是 **9 位纳秒**，`DateTimeOffset.Parse` 会静默截断到 100ns、
+  `ParseExact("o")` 直接抛 —— 低 2 位另存 `SubTickNanoseconds` 参与 `SortKey` 全序比较。
+- **⚠️ DataTemplate 内不能用 `ViewModel.` 前缀**：`x:Bind` 有 `x:DataType` 作用域，
+  模板里写 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSelectMode)}"`
+  会让 XAML 编译器报 **WMC9999「找不到 ErrorMessages 资源」**（错误信息被误报成资源问题，
+  极具迷惑性）。行内要用 ViewModel 的东西，就把状态**放进模型**
+  或改用 ListView 原生 `SelectionMode` + `SelectionChanged` 回调。
+  同理 `CommandParameter="{x:Bind}"`（整体绑定）不受支持 —— 改用 `Click` 处理器 +
+  `((FrameworkElement)sender).DataContext` 取行。
+- **unpackaged 下打开外部程序用 `Process.Start` + `UseShellExecute=true`**，不要用 WinRT
+  `Launcher.LaunchUri`（无包身份时默认处理器解析不可靠）。本项目
+  `WindowsPackageType=None`，这是硬约束。
 
 ## 7. 实现进度与剩余项
 

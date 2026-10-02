@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -176,4 +177,110 @@ public sealed class FakeWslcClient : IWslcClient
 
     public Task DeletePathAsync(string container, string path, CancellationToken ct = default) =>
         Task.CompletedTask;
+
+    // ---- 镜像 push/tag/save/load/import（离线假实现）----
+    public Task PushImageAsync(
+        string reference,
+        bool allTags = false,
+        bool quiet = false,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        // 与真机一致的进度流形态，让 UI 在离线开发时也能验证滚动日志区。
+        progress?.Report($"[fake] 正在推送 {reference}{(allTags ? "（含全部标签）" : "")} …");
+        progress?.Report("[fake] 推送完成");
+        return Task.CompletedTask;
+    }
+
+    public Task TagImageAsync(string source, string target, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task<string> SaveImagesAsync(
+        IReadOnlyList<string> references, string outputPath, CancellationToken ct = default) =>
+        Task.FromResult($"[fake] 已导出 {references.Count} 个镜像到 {outputPath}");
+
+    public Task<string> LoadImagesAsync(
+        string inputPath, bool quiet = false, CancellationToken ct = default) =>
+        Task.FromResult($"已加载映像: nginx:latest\n已加载映像: alpine:latest");
+
+    public Task<string> ImportImageAsync(
+        string filePath, string? reference = null, CancellationToken ct = default) =>
+        Task.FromResult("5444d31e953a");
+
+    // ---- registry 登录（离线假实现）----
+    // 假实现**不回显也不存储**密码：离线开发同样不该养成把凭据写进日志的习惯。
+    public Task RegistryLoginAsync(
+        string? server, string? username, string password, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task RegistryLogoutAsync(string? server = null, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    // ---- 容器导出 / 强杀 ----
+    public Task ExportContainerAsync(
+        string container, string outputPath, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task KillContainerAsync(
+        string container, string? signal = null, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    // ---- 网络接入 / 断开 ----
+    public Task ConnectNetworkAsync(
+        string network, string container, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    public Task DisconnectNetworkAsync(
+        string network, string container, CancellationToken ct = default) =>
+        Task.CompletedTask;
+
+    // ---- 系统信息（离线假数据）----
+    public Task<SystemInfo> GetSystemInfoAsync(CancellationToken ct = default) =>
+        Task.FromResult(new SystemInfo
+        {
+            WslVersion = "3.0.1.0",
+            KernelVersion = "6.18.40.1-1",
+            Direct3DVersion = "1.611.1-81528511",
+            DxCoreVersion = "10.0.26100.1-240331-1435.ge-release",
+            WindowsVersion = "10.0.26300.9550",
+            SettingsFile = @"C:\Users\demo\AppData\Local\wslc\settings.yaml",
+            SessionManagerVersion = "3.0.1",
+            SessionCount = 1,
+            Sessions = new List<WslcSessionInfo>
+            {
+                new() { Id = "1", CreatorPid = 36352, DisplayName = "wslcui-fake-Administrator" },
+            },
+        });
+
+    // ---- 事件流历史回读（离线开发用：回显几行与真实 CLI 同形状的事件）----
+    // 真实 `wslc events` 永不自行退出，实现是「逐行读 + 空闲即止」；这里直接给结果。
+    public Task<IReadOnlyList<ContainerEvent>> ListEventsAsync(
+        string? since, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ContainerEvent>>(new List<ContainerEvent>
+        {
+            new()
+            {
+                Timestamp = DateTimeOffset.Now.AddSeconds(-30),
+                Category = "container", Action = "create", ObjectId = "0f1e2d3c4b5a6789abcdef0123456789abcdef0123456789abcdef0123456789",
+                Name = "web", Image = "nginx:latest", Details = "image=nginx:latest, name=web",
+                Fields = new Dictionary<string, string> { ["image"] = "nginx:latest", ["name"] = "web" },
+            },
+            new()
+            {
+                Timestamp = DateTimeOffset.Now.AddSeconds(-20),
+                Category = "container", Action = "start", ObjectId = "0f1e2d3c4b5a6789abcdef0123456789abcdef0123456789abcdef0123456789",
+                Name = "web", Image = "nginx:latest", Details = "image=nginx:latest, name=web",
+                Fields = new Dictionary<string, string> { ["image"] = "nginx:latest", ["name"] = "web" },
+            },
+            new()
+            {
+                Timestamp = DateTimeOffset.Now.AddSeconds(-10),
+                Category = "container", Action = "stop", ObjectId = "0f1e2d3c4b5a6789abcdef0123456789abcdef0123456789abcdef0123456789",
+                Name = "web", Image = "nginx:latest", Details = "exitCode=137, image=nginx:latest, name=web",
+                Fields = new Dictionary<string, string>
+                {
+                    ["exitCode"] = "137", ["image"] = "nginx:latest", ["name"] = "web",
+                },
+            },
+        });
 }

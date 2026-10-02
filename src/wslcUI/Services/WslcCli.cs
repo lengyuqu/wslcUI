@@ -23,11 +23,17 @@ namespace wslcUI.Services;
 ///     resources, so every network/volume operation is CLI-bridged.
 ///   - one-shot resource snapshots       (no stats projection)
 ///   - image build from a Dockerfile    (no build projection)
+///   - image push/tag/save/load/import, registry login/logout,
+///     container export/kill, network connect/disconnect, `system info`
+///     — wslc 3.0.1 新增的 CLI 能力，C# 投影里同样没有对应成员。
 ///
 /// These are bridged with <c>wslc list -a</c> / <c>wslc start</c> / <c>wslc stop</c> /
 /// <c>wslc rm</c> / <c>wslc image rm</c> / <c>wslc logs</c> /
 /// <c>wslc network create|ls|remove</c> / <c>wslc volume create|ls|remove</c> /
-/// <c>wslc stats</c> / <c>wslc build -t &lt;tag&gt; &lt;context&gt;</c>.
+/// <c>wslc stats</c> / <c>wslc build -t &lt;tag&gt; &lt;context&gt;</c> /
+/// <c>wslc image push|tag|save|load|import</c> / <c>wslc registry login|logout</c> /
+/// <c>wslc container export|kill</c> / <c>wslc network connect|disconnect</c> /
+/// <c>wslc system info</c>.
 /// See AGENTS.md → "Known SDK gaps". The executable path (ExePath) is also
 /// reused directly by the interactive terminal (TerminalWindow) for `wslc exec -it`.
 ///
@@ -98,11 +104,15 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// 所有 CLI 调用（含 <see cref="BuildImageAsync"/>）的统一前置守卫。
+    /// 所有 CLI 调用（含 <see cref="BuildImageAsync"/>、事件流服务）的统一前置守卫。
     /// 不守卫的话 Process.Start 会抛裸 Win32Exception（"系统找不到指定的文件"），
     /// 既没有可操作的下一步建议，也命中不了 <see cref="TranslateCliError"/> 的映射表。
+    /// <para>
+    /// <c>internal</c> 而非 <c>private</c>：<see cref="EventStreamService"/> 在
+    /// <c>WslcCli</c> 之外单独起进程，必须复用同一守卫与同一份错误文案。
+    /// </para>
     /// </summary>
-    private static void EnsureExe()
+    internal static void EnsureExe()
     {
         if (File.Exists(ExePath)) return;
         throw new FileNotFoundException(
@@ -161,6 +171,160 @@ internal static class WslcCli
         var (exit, _, stderr) = await RunAsync(new[] { "image", "rm", reference }, ct).ConfigureAwait(false);
         if (exit != 0)
             throw new InvalidOperationException($"wslc image rm 失败: {stderr.Trim()}");
+    }
+
+    // ====================================================================
+    //  镜像 push / tag / save / load / import
+    //
+    //  ⚠️ 参数形态全部经真机 `wslc xxx --help` 核实（wslc 3.0.1 GA，2026-10-02），
+    //  与 docker 有几处**实质差异**，不要凭 docker 习惯写：
+    //   • `push` **只接受一个**位置参数 <image>。docker 的
+    //     `docker push <image> <target>` 双位置形态在 wslc 上直接报
+    //     「在未预期的情况下找到位置参数」——目标仓库必须写进 image 引用本身
+    //     （如 `myreg.io/app:latest`）。
+    //   • `tag` 是 `<source> <target>`，**两端都是 image-name[:tag]**，无 -f/-a。
+    //   • `save` 的输出路径是 `-o/--output`，且 `<image>...` **必填**（1..N 个）——
+    //     不给镜像名会报「未提供所需参数:"image"」，没有「导出全部」的形态。
+    //   • `load` 是 `-i/--input`（**不是** docker 的位置参数），且无位置参数。
+    //   • `import` 与 docker 不同：tar 路径是**必填位置参数** `<file>`，
+    //     可选第二位置参数 `[<image>]` 是重命名，**没有 -o**；
+    //     输出是新镜像 ID（stdout 单行，实测 `5444d31e953a`）。
+    // ====================================================================
+
+    /// <summary>
+    /// 推送镜像到注册表（<c>wslc image push [-a|--all-tags] [-q|--quiet] &lt;image&gt;</c>）。
+    ///
+    /// <para>
+    /// <paramref name="reference"/> 必须**自带仓库前缀**（<c>registry.example.com/app:v1</c>）——
+    /// wslc 与 docker 不同，只接受**一个**位置参数，没有「源 + 目标」双参数形态。
+    /// </para>
+    /// <para>
+    /// <paramref name="allTags"/> 对应 <c>-a/--all-tags</c>（推送该镜像的全部标签），
+    /// <paramref name="quiet"/> 对应 <c>-q/--quiet</c>（抑制进度输出）。
+    /// 推送是长耗时操作，逐行进度经 <paramref name="progress"/> 流式回传。
+    /// </para>
+    /// </summary>
+    public static async Task PushImageAsync(
+        string reference, bool allTags, bool quiet,
+        IProgress<string>? progress, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(reference))
+            throw new ArgumentException("镜像引用不能为空。", nameof(reference));
+
+        var args = new List<string> { "image", "push" };
+        if (allTags) args.Add("-a");
+        if (quiet) args.Add("-q");
+        args.Add(reference);
+
+        await RunStreamingAsync(args.ToArray(), progress, "wslc image push", ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 给镜像打标签（<c>wslc image tag &lt;source&gt; &lt;target&gt;</c>）。
+    /// 两端都是 <c>image-name[:tag]</c> 形态；无 <c>-f</c>/<c>-a</c> 之类选项。
+    /// 成功时 stdout 无输出（真机实测），失败走 <see cref="TranslateCliError"/> 映射。
+    /// </summary>
+    public static async Task TagImageAsync(string source, string target, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            throw new ArgumentException("源镜像引用不能为空。", nameof(source));
+        if (string.IsNullOrWhiteSpace(target))
+            throw new ArgumentException("目标镜像引用不能为空。", nameof(target));
+
+        var (exit, _, stderr) = await RunAsync(new[] { "image", "tag", source, target }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image tag 失败: {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 把一个或多个镜像导出为 tar 归档
+    /// （<c>wslc image save -o &lt;output&gt; &lt;image&gt;...</c>）。
+    ///
+    /// <para>
+    /// ⚠️ <c>&lt;image&gt;...</c> **必填**（1..N 个位置参数），wslc **没有**「导出全部镜像」
+    /// 的形态——不传镜像名会报「未提供所需参数:"image"」。输出路径走 <c>-o/--output</c>，
+    /// 省略时 tar 会直接写到 stdout（二进制流，不适合 GUI 场景，故本方法强制要求路径）。
+    /// </para>
+    /// </summary>
+    /// <returns>CLI 原始 stdout（成功时通常为空或一行统计）。</returns>
+    public static async Task<string> SaveImagesAsync(
+        IReadOnlyList<string> references, string outputPath, CancellationToken ct)
+    {
+        if (references is null || references.Count == 0)
+            throw new ArgumentException("至少需要一个镜像引用。", nameof(references));
+        if (string.IsNullOrWhiteSpace(outputPath))
+            throw new ArgumentException("输出路径不能为空。", nameof(outputPath));
+        EnsureWritableTarget(outputPath);
+
+        var args = new List<string> { "image", "save", "-o", outputPath };
+        args.AddRange(references);
+
+        var (exit, stdout, stderr) = await RunAsync(args.ToArray(), ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image save 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    /// <summary>
+    /// 从 tar 归档导入镜像（<c>wslc image load -i &lt;input&gt; [-q]</c>）。
+    ///
+    /// <para>
+    /// ⚠️ 与 docker 不同：输入路径是 <c>-i/--input</c> 选项而**不是位置参数**
+    /// （docker 是 <c>docker load -i</c> 但 wslc 同样用 -i；区别在于 wslc **没有**
+    /// <c>load &lt;file&gt;</c> 位置参数形态），且 <paramref name="quiet"/> 对应
+    /// <c>-q/--quiet</c>（加载期间抑制进度输出）。
+    /// </para>
+    /// <para>
+    /// 成功后 stdout 每行一个「已加载映像: name:tag」（真机实测）。
+    /// </para>
+    /// </summary>
+    public static async Task<string> LoadImagesAsync(
+        string inputPath, bool quiet, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(inputPath))
+            throw new ArgumentException("归档路径不能为空。", nameof(inputPath));
+        if (!File.Exists(inputPath))
+            throw new FileNotFoundException($"找不到 tar 归档文件: {inputPath}", inputPath);
+
+        var args = new List<string> { "image", "load", "-i", inputPath };
+        if (quiet) args.Add("-q");
+
+        var (exit, stdout, stderr) = await RunAsync(args.ToArray(), ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image load 失败: {stderr.Trim()}");
+        return stdout;
+    }
+
+    /// <summary>
+    /// 从 tarball（docker save 产物等）导入并可同时重命名
+    /// （<c>wslc image import &lt;file&gt; [&lt;image&gt;]</c>）。
+    ///
+    /// <para>
+    /// ⚠️ 与 docker 的关键差异：tar 路径是**必填位置参数** <c>&lt;file&gt;</c>，
+    /// <b>没有 <c>-o/--output</c></b>；可选第二位置参数 <c>[&lt;image&gt;]</c> 是
+    /// 「导入后叫什么」，不是输出路径。
+    /// </para>
+    /// <para>
+    /// 成功时 stdout 是**新镜像的短 ID**（真机实测单行 <c>5444d31e953a</c>），
+    /// 不带重命名时该镜像的 REPOSITORY/TAG 为 <c>&lt;none&gt;</c>。
+    /// </para>
+    /// </summary>
+    /// <returns>CLI 原始 stdout（镜像短 ID）。</returns>
+    public static async Task<string> ImportImageAsync(
+        string filePath, string? reference, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+            throw new ArgumentException("tarball 路径不能为空。", nameof(filePath));
+        if (!File.Exists(filePath))
+            throw new FileNotFoundException($"找不到 tarball 文件: {filePath}", filePath);
+
+        var args = new List<string> { "image", "import", filePath };
+        if (!string.IsNullOrWhiteSpace(reference)) args.Add(reference);
+
+        var (exit, stdout, stderr) = await RunAsync(args.ToArray(), ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc image import 失败: {stderr.Trim()}");
+        return stdout;
     }
 
     // ---- image build (no SDK projection for Dockerfile builds → CLI bridge) ----
@@ -340,6 +504,314 @@ internal static class WslcCli
         if (exit != 0)
             throw new InvalidOperationException($"wslc volume prune 失败: {stderr.Trim()}");
         return stdout;
+    }
+
+    // ====================================================================
+    //  registry login / logout  ——  ⚠️ 密码只走 stdin
+    //
+    //  真实参数形态（真机 `wslc registry login --help`，wslc 3.0.1 GA，2026-10-02）：
+    //      wslc registry login  [选项] [<server>]
+    //      -u, --username <username>     用户名
+    //      -p, --password <password>     密码 / PAT        ← **绝对不用**
+    //          --password-stdin          从 stdin 读取密码 / PAT   ← 只用这个
+    //  server 是**可选位置参数**，省略时由会话定义（因此本方法允许 server 为 null）。
+    //
+    //  ⚠️ 为什么必须 --password-stdin：`-p` 会把密码**暴露在进程命令行**上，
+    //  同机任何用户用 `wslc` 的进程列表 / 任务管理器 / ProcMon 都能看到，
+    //  且可能被日志 / 崩溃 dumps 记录。--password-stdin 让密码只经管道进子进程。
+    //  因此本文件实现了唯一一条能向子进程 stdin 写数据的执行路径
+    //  （RunWithStdinAsync），密码**不落盘、不进日志、不进异常消息**。
+    // ====================================================================
+
+    /// <summary>
+    /// 登录到镜像仓库（<c>wslc registry login -u &lt;user&gt; --password-stdin [&lt;server&gt;]</c>）。
+    ///
+    /// <para>
+    /// 密码经 <c>--password-stdin</c> 从子进程 stdin 管道写入，**不走 <c>-p</c>**：
+    /// <c>-p</c> 会让密码出现在进程命令行里（同机可见、可能被日志留存）。
+    /// 密码只存在于本方法的局部变量与管道缓冲中，**不写磁盘、不写日志、
+    /// 不进异常消息**（异常里只放 stderr 的错误码与提示）。
+    /// </para>
+    /// <para>
+    /// <paramref name="server"/> 可为 null/空 —— wslc 此时用会话定义的默认服务器。
+    /// </para>
+    /// </summary>
+    public static async Task RegistryLoginAsync(
+        string? server, string? username, string password, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(password))
+            throw new ArgumentException("密码不能为空。", nameof(password));
+
+        var args = new List<string> { "registry", "login", "--password-stdin" };
+        if (!string.IsNullOrWhiteSpace(username)) { args.Add("-u"); args.Add(username); }
+        if (!string.IsNullOrWhiteSpace(server)) args.Add(server);
+
+        var (exit, _, stderr) = await RunWithStdinAsync(args.ToArray(), password, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc registry login 失败: {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 从镜像仓库注销（<c>wslc registry logout [&lt;server&gt;]</c>）。
+    /// <paramref name="server"/> 可省略（用会话定义的默认服务器）；无任何选项。
+    /// </summary>
+    public static async Task RegistryLogoutAsync(string? server, CancellationToken ct)
+    {
+        var args = new List<string> { "registry", "logout" };
+        if (!string.IsNullOrWhiteSpace(server)) args.Add(server);
+
+        var (exit, _, stderr) = await RunAsync(args.ToArray(), ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc registry logout 失败: {stderr.Trim()}");
+    }
+
+    // ====================================================================
+    //  container export / kill
+    //
+    //  真实参数形态（真机 --help，wslc 3.0.1 GA，2026-10-02）：
+    //      wslc container export [选项] <container-id>
+    //      -o, --output <file>    写入文件，而不是 STDOUT
+    //      wslc container kill [选项] <container-id>...
+    //      -s, --signal <signal>  发送到容器的信号（默认：SIGKILL）
+    //
+    //  ⚠️ help 把位置参数写作 <container-id>，但**实测名字与短 ID 都能用**
+    //  （2026-10-02：`wslc export wslc-pg -o …` 与 `wslc kill 20f2ed8f095c`
+    //  都成功命中同一容器），故本仓库统一传**容器名**——UI 侧持有的就是名字，
+    // 而 `wslc list -a` 的名字列可能重名，调用方需保证名字能唯一命中。
+    //  对比：`wslc stats` 的位置参数**只认名字**（短 ID 报 WSLC_E_CONTAINER_NOT_FOUND）。
+    // ====================================================================
+
+    /// <summary>
+    /// 把容器文件系统导出为 tar 归档
+    /// （<c>wslc container export -o &lt;output&gt; &lt;container&gt;</c>）。
+    ///
+    /// <para>
+    /// <c>-o/--output</c> 省略时 tar 走 **STDOUT**（二进制流，GUI 场景不可用），
+    /// 故本方法强制要求输出路径。注意这是**文件系统导出**（不含卷挂载与元数据），
+    /// 与 <c>image save</c> 不是一回事。
+    /// </para>
+    /// </summary>
+    public static async Task ExportContainerAsync(
+        string container, string outputPath, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(container))
+            throw new ArgumentException("容器名不能为空。", nameof(container));
+        if (string.IsNullOrWhiteSpace(outputPath))
+            throw new ArgumentException("输出路径不能为空。", nameof(outputPath));
+        EnsureWritableTarget(outputPath);
+
+        var (exit, _, stderr) = await RunAsync(
+            new[] { "container", "export", "-o", outputPath, container }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc container export 失败: {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 强杀容器（<c>wslc container kill [-s &lt;signal&gt;] &lt;container&gt;</c>）。
+    ///
+    /// <para>
+    /// 默认信号是 <c>SIGKILL</c>（不可捕获、不给清理机会）；传
+    /// <paramref name="signal"/>（如 <c>SIGTERM</c>、<c>SIGINT</c>）可换信号。
+    /// 对已停止的容器会报 <c>WSLC_E_CONTAINER_NOT_RUNNING</c>。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="StopAsync"/> 的区别：<c>stop</c> 是优雅停止（SIGTERM + 等退出），
+    /// 容器卡死时只能靠本方法强杀。
+    /// </para>
+    /// </summary>
+    public static async Task KillContainerAsync(
+        string container, string? signal, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(container))
+            throw new ArgumentException("容器名不能为空。", nameof(container));
+
+        var args = new List<string> { "container", "kill" };
+        if (!string.IsNullOrWhiteSpace(signal)) { args.Add("-s"); args.Add(signal); }
+        args.Add(container);
+
+        var (exit, _, stderr) = await RunAsync(args.ToArray(), ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc container kill 失败: {stderr.Trim()}");
+    }
+
+    // ====================================================================
+    //  network connect / disconnect
+    //
+    //  真实参数形态（真机 --help，wslc 3.0.1 GA，2026-10-02）：
+    //      wslc network connect    <network-name> <container-id>  [--ip|--network-alias|--link|--driver-opt|--link-local-ip]
+    //      wslc network disconnect <network-name> <container-id>
+    //
+    //  ⚠️ **位置参数顺序是「网络名 + 容器」，与 docker 一致**，不要传反；
+    //  help 把第二个写作 <container-id>，但实测**容器名同样可用**
+    //  （2026-10-02：`wslc network connect bridge wslc-pg` 成功，随后 disconnect
+    //  也成功；重复 disconnect 报 E_FAIL「is not connected to the network」），
+    //  因此本仓库统一传容器名（同 KillContainerAsync 的说明）。
+    //  ⚠️ 与 `wslc stats` 不同——那里位置参数只认名字、短 ID 会报
+    //  WSLC_E_CONTAINER_NOT_FOUND。这里名字/ID 都行，不要据 stats 的结论推断。
+    // ====================================================================
+
+    /// <summary>
+    /// 把容器接入已有网络（<c>wslc network connect &lt;network&gt; &lt;container&gt;</c>）。
+    /// 重复接入会报错（<c>E_FAIL</c>「is already connected to the network」）。
+    /// </summary>
+    public static async Task ConnectNetworkAsync(
+        string network, string container, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(network))
+            throw new ArgumentException("网络名称不能为空。", nameof(network));
+        if (string.IsNullOrWhiteSpace(container))
+            throw new ArgumentException("容器名不能为空。", nameof(container));
+
+        var (exit, _, stderr) = await RunAsync(
+            new[] { "network", "connect", network, container }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc network connect 失败: {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 把容器从网络断开（<c>wslc network disconnect &lt;network&gt; &lt;container&gt;</c>）。
+    /// 该容器当前未接入时，报 <c>E_FAIL</c>「is not connected to the network」。
+    /// </summary>
+    public static async Task DisconnectNetworkAsync(
+        string network, string container, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(network))
+            throw new ArgumentException("网络名称不能为空。", nameof(network));
+        if (string.IsNullOrWhiteSpace(container))
+            throw new ArgumentException("容器名不能为空。", nameof(container));
+
+        var (exit, _, stderr) = await RunAsync(
+            new[] { "network", "disconnect", network, container }, ct).ConfigureAwait(false);
+        if (exit != 0)
+            throw new InvalidOperationException($"wslc network disconnect 失败: {stderr.Trim()}");
+    }
+
+    // ---- 事件流（`wslc events`）----
+    //
+    // ⚠️ **实测 2026-10-02（wslc 3.0.1.0）：`wslc events` 永不自行退出。**
+    // 即使同时给 `--since 5m` 和 `--until <现在>`，它也只是把窗口内的事件**回放一遍**，
+    // 然后继续挂在 stdout 上等新事件 —— 进程永不 EOF。
+    // 因此下面这个「一次性历史回读」**不能走 RunAsync**（那里是 ReadToEndAsync +
+    // WaitForExitAsync，会永久挂死，UI 卡在「加载中」）。
+    // 实测：`--since 5m` 回放 3 条历史后仍在流；`--until <过去>` 会报
+    // 「`since` 时间不能晚于 `until` 时间 (E_INVALIDARG)」。
+    //
+    // 解法是**空闲即止**：逐行异步读，一旦连续 `idleTimeout` 没有新行就认为
+    // 「历史回放完毕」，主动杀进程返回。长驻监听交给 EventStreamService。
+
+    /// <summary>
+    /// 一次性拉取历史事件（<c>wslc events --since &lt;since&gt;</c>）。
+    /// 回放到「连续 <paramref name="idleTimeout"/> 无新行」为止后主动结束。
+    /// </summary>
+    /// <param name="since">回看窗口，如 <c>5m</c> / <c>2h</c>；<c>null</c> 或空白时默认 <c>5m</c>。</param>
+    /// <param name="ct">取消令牌：取消即杀进程（与 <see cref="RunAsync"/> 的安全网同构）。</param>
+    public static Task<IReadOnlyList<ContainerEvent>> ListEventsAsync(
+        string? since, CancellationToken ct) =>
+        ListEventsAsync(since, DefaultHistoryIdle, ct);
+
+    /// <summary>历史回读的默认空闲判定期。实测历史是「一次性倾泻」，几百毫秒足够。</summary>
+    private static readonly TimeSpan DefaultHistoryIdle = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>解析一段 <c>wslc events</c> 输出为事件列表（纯函数，单测直接喂真机原文）。</summary>
+    internal static IReadOnlyList<ContainerEvent> ParseEventLines(string? output)
+    {
+        var result = new List<ContainerEvent>();
+        if (string.IsNullOrWhiteSpace(output)) return result;
+        foreach (var raw in output.Split('\n'))
+        {
+            var ev = EventLineParser.Parse(raw.TrimEnd('\r'));
+            if (ev is not null) result.Add(ev);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 逐行异步读 + 空闲即止地拉取历史事件。
+    /// </summary>
+    /// <remarks>
+    /// 长驻流（不传 <paramref name="since"/> 的持续监听）请用
+    /// <see cref="EventStreamService"/>，别用这个。
+    /// </remarks>
+    internal static async Task<IReadOnlyList<ContainerEvent>> ListEventsAsync(
+        string? since, TimeSpan idleTimeout, CancellationToken ct)
+    {
+        EnsureExe();
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ExePath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+        };
+        psi.ArgumentList.Add("events");
+        // 空 since 传下去会让 wslc 报参数错误，替换成默认窗口。
+        psi.ArgumentList.Add("--since");
+        psi.ArgumentList.Add(string.IsNullOrWhiteSpace(since) ? "5m" : since);
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+
+        var collected = new List<ContainerEvent>();
+        var sawAny = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lastLineAt = DateTime.UtcNow;
+        var gate = new object();
+
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            lock (gate)
+            {
+                var ev = EventLineParser.Parse(e.Data);
+                if (ev is not null) collected.Add(ev);
+                lastLineAt = DateTime.UtcNow;
+            }
+            sawAny.TrySetResult(true);
+        };
+        proc.BeginOutputReadLine();
+        // stderr 同样要排空，否则 wslc 报错写满 4 KB 管道缓冲会把自己堵死。
+        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+
+        // 等第一行（有界）：进程可能根本无输出（窗口内没事件），不能死等。
+        try
+        {
+            await sawAny.Task.WaitAsync(TimeSpan.FromSeconds(5), ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // 5 秒内没有任何输出：视为「该窗口无事件」，正常返回空列表。
+        }
+
+        // 空闲即止：历史是一口气倾泻完的，等一小段静默就可以收工。
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            bool idle;
+            lock (gate) idle = (DateTime.UtcNow - lastLineAt) >= idleTimeout;
+            if (idle || proc.HasExited) break;
+            await Task.Delay(25, ct).ConfigureAwait(false);
+        }
+
+        string stderr;
+        try { stderr = await stderrTask.ConfigureAwait(false); }
+        catch (OperationCanceledException) { stderr = ""; }
+
+        if (!proc.HasExited)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        }
+        try { await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch { /* best effort */ }
+
+        // 有事件就不算失败（窗口内确实发生过事）；一条都没有且 wslc 报错才抛，
+        // 否则「最近 5 分钟无事件」会被误报成错误。
+        if (collected.Count == 0 && proc.ExitCode != 0)
+            throw CliFailed("wslc events", proc.ExitCode, stderr);
+
+        return collected;
     }
 
     // ---- 容器内文件系统（文件浏览窗口）----
@@ -564,7 +1036,35 @@ internal static class WslcCli
     }
 
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
-        string[] args, CancellationToken ct)
+        string[] args, CancellationToken ct) =>
+        await RunCoreAsync(args, stdin: null, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// 唯一一条能向子进程 <b>stdin</b> 写数据的执行路径。
+    ///
+    /// <para>
+    /// 目前只有 <see cref="RegistryLoginAsync"/> 用它（<c>--password-stdin</c>）。
+    /// 写成独立方法而不是给 <see cref="RunAsync"/> 加可选参数，是因为「喂 stdin」
+    /// 是一类**有安全含义**的调用：它只该服务于「凭据 / 大体积二进制」这类
+    /// 不能走命令行的输入，签名上单独暴露便于审计。
+    /// </para>
+    /// </summary>
+    /// <param name="stdin">要写入 stdin 的文本；写入后立即<b>关闭</b> stdin（发 EOF）。
+    /// wslc 读到 EOF 才认为输入结束，否则会一直等 → 永久挂起。</param>
+    private static async Task<(int Exit, string Stdout, string Stderr)> RunWithStdinAsync(
+        string[] args, string stdin, CancellationToken ct) =>
+        await RunCoreAsync(args, stdin, ct).ConfigureAwait(false);
+
+    /// <summary>
+    /// 执行 wslc 并收集输出。<paramref name="stdin"/> 非 null 时重定向并写入 stdin。
+    ///
+    /// <para>
+    /// ⚠️ <b>密码等敏感输入绝不进 <paramref name="args"/></b>：命令行对同机所有
+    /// 进程可见。凭据只能走 <paramref name="stdin"/>。
+    /// </para>
+    /// </summary>
+    private static async Task<(int Exit, string Stdout, string Stderr)> RunCoreAsync(
+        string[] args, string? stdin, CancellationToken ct)
     {
         EnsureExe();
 
@@ -573,6 +1073,7 @@ internal static class WslcCli
             FileName = ExePath,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = stdin is not null,
             UseShellExecute = false,
             CreateNoWindow = true,
             // 必须显式 UTF-8：GUI 进程没有控制台，.NET 默认按系统 ANSI 代码页
@@ -598,6 +1099,18 @@ internal static class WslcCli
             try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
         });
 
+        // 先把 stdin 写完并关闭，再排空输出流。
+        // 顺序很关键：写 stdin 时进程可能已经在往 stdout 灌数据
+        // （login 失败时 stdout/stderr 都有内容），若先把 stdout 排空、
+        // 再写 stdin，进程却在等 stdin 就会互锁。
+        // 写完立刻 Close() 发 EOF —— 否则 wslc 会一直等更多输入而永不退出。
+        if (stdin is not null)
+        {
+            await proc.StandardInput.WriteAsync(stdin).ConfigureAwait(false);
+            proc.StandardInput.Flush();
+            proc.StandardInput.Close();
+        }
+
         // 两个流必须**并发**排空：串行 await（先 stdout 再 stderr）时，子进程若在
         // stdout 结束前写满 stderr 的管道缓冲（默认 4 KB）就会阻塞在写侧，stdout
         // 随之永不 EOF —— 双向等待，永久挂起。wslc 报错时 stderr 常带完整错误码与
@@ -607,6 +1120,276 @@ internal static class WslcCli
         await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
         await proc.WaitForExitAsync(ct).ConfigureAwait(false);
         return (proc.ExitCode, stdoutTask.Result, stderrTask.Result);
+    }
+
+    /// <summary>
+    /// 逐行流式执行（长耗时命令：push / build 这类）。
+    /// stdout 走 <paramref name="progress"/> 回调，stderr 收集到异常消息里。
+    /// </summary>
+    private static async Task RunStreamingAsync(
+        string[] args, IProgress<string>? progress, string command, CancellationToken ct)
+    {
+        EnsureExe();
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ExePath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+        using var _reg = ct.Register(() =>
+        {
+            try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
+        });
+
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is not null) progress?.Report(e.Data);
+        };
+        proc.BeginOutputReadLine();
+        // stderr 并发排空（同 RunCoreAsync 的死锁理由）。
+        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+        await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+        var stderr = await stderrTask.ConfigureAwait(false);
+        if (proc.ExitCode != 0)
+            throw new InvalidOperationException($"{command} 失败 (exit {proc.ExitCode}): {stderr.Trim()}");
+    }
+
+    /// <summary>
+    /// 导出类命令（save / export）的前置检查：目标文件所在目录必须已存在。
+    /// 提前抛出可读异常，而不是让 wslc 报一个含糊的路径错误。
+    /// </summary>
+    private static void EnsureWritableTarget(string outputPath)
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            throw new DirectoryNotFoundException($"输出目录不存在: {dir}");
+    }
+
+    // ---- system info（SDK 3.0.1 无「版本/会话」查询投影 → CLI 桥接）----
+    // 真实形态（真机 wslc 3.0.1 GA，2026-10-02）见 SystemInfo 类注释。
+    // `system info` 支持 `--format json`，但 AGENTS.md 已记录 wslc 各子命令的
+    // JSON 形态不一致；本命令的 table 形态极稳（两段键值 + 一张三列表），
+    // 且键名需要保留本地化原文给用户看，所以走文本解析。
+    public static async Task<SystemInfo> GetSystemInfoAsync(CancellationToken ct)
+    {
+        var (exit, stdout, stderr) = await RunAsync(new[] { "system", "info" }, ct).ConfigureAwait(false);
+        return exit == 0 ? ParseSystemInfo(stdout) : throw CliFailed("wslc system info", exit, stderr);
+    }
+
+    /// <summary>
+    /// 解析 <c>wslc system info</c> 的两段式输出。真实形态见 <see cref="SystemInfo"/>。
+    ///
+    /// <para>
+    /// 结构：<c>客户端:</c> / <c>服务器:</c> 两个小节标题（**中文冒号**，行尾无空格），
+    /// 下面各跟着 <c>键: 值</c> 行；<c>会话: N</c> 之后是三列表
+    /// <c>ID / 创建者 PID / 显示名称</c>。三个字段全是中文，且英文 locale 下会变，
+    /// 因此键名匹配**同时接受中英文**（见下方各 <c>case</c> 分支），匹配时按
+    /// 「键名去掉冒号、去空白」<b>全等</b>比较，<b>不用</b> <c>StartsWith</c>
+    /// —— <c>会话</c> 是 <c>会话管理器版本</c> 的前缀，前缀匹配会把版本号误当会话数。
+    /// </para>
+    ///
+    /// <para>
+    /// 表头 <c>ID   创建者 PID   显示名称</c> 的 <c>创建者 PID</c> 列名**含一个空格**，
+    /// 但按「2+ 空格」切列仍得到 3 个 caption（<c>ID</c>/<c>创建者 PID</c>/<c>显示名称</c>）。
+    /// </para>
+    ///
+    /// <para>
+    /// ⚠️ <b>数据行不按表头列位切片</b>，而是按「2+ 空格切最多 3 段」
+    /// （见 <see cref="SplitSessionRow"/>）：表头列位是从<b>表头自己</b>推出来的，
+    /// 一旦某行的 PID 比表头 caption 窄（例如 3 位的 <c>abc</c> 撞上 8 字符宽的
+    /// <c>创建者 PID</c>），整行相对列位就会左移，按列位切片会把显示名称
+    /// <b>啃掉开头几个字母</b>（实测 <c>some-session</c> → <c>me-session</c>）。
+    /// 按分隔符切则与列宽完全无关。
+    /// </para>
+    ///
+    /// <para>
+    /// 解析器对残缺输入**宽容**：不认识的行跳过、缺字段留空、
+    /// <see cref="SystemInfo.SessionCount"/> 读不到时为 <c>null</c>（不谎报 0）。
+    /// </para>
+    /// </summary>
+    internal static SystemInfo ParseSystemInfo(string output)
+    {
+        var info = new SystemInfo();
+        if (string.IsNullOrWhiteSpace(output)) return info;
+
+        var sessions = new List<WslcSessionInfo>();
+        // null = 还没进「服务器:」小节；进入后为 true，用于把会话表归到正确小节。
+        bool? inServer = null;
+        // 会话表表头首次出现的位置 + 其列边界（数据行据此判定"是不是会话行"）。
+        int[]? sessionBounds = null;
+        int sessionHeaderIdx = -1;
+
+        var lines = output.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+            if (line.Length == 0) continue;
+
+            // 小节标题：以「客户端:」/「服务器:」结尾（中文或英文冒号）。
+            if (line == "客户端:" || line == "客户端：" || line == "Client:")
+            { inServer = false; continue; }
+            if (line == "服务器:" || line == "服务器：" || line == "Server:")
+            { inServer = true; continue; }
+
+            // 会话表。数据行按「2+ 空格切成最多 3 段」解析，
+            // 而不是按表头列位切片（见 ReadSessionDisplayName 的注释）。
+            if (inServer == true && sessionBounds is not null && i > sessionHeaderIdx)
+            {
+                var cells = SplitSessionRow(line);
+                if (cells is not null)
+                {
+                    _ = int.TryParse(cells.Value.CreatorPid, NumberStyles.None, CultureInfo.InvariantCulture, out var pid);
+                    sessions.Add(new WslcSessionInfo
+                    {
+                        Id = cells.Value.Id,
+                        CreatorPid = pid,
+                        DisplayName = cells.Value.DisplayName,
+                    });
+                    continue;
+                }
+            }
+            // 尚未见到表头时，先尝试把本行当表头（表头在数据行之前）。
+            if (inServer == true && sessionBounds is null && IsSessionHeader(line))
+            {
+                sessionBounds = ComputeColumnBoundaries(line);
+                sessionHeaderIdx = i;
+                continue;
+            }
+
+            // 键值行：「键: 值」。设置文件的值是路径（含 Windows 盘符冒号 C:\…），
+            // 所以只在**第一个**冒号处切分，值里的冒号必须原样保留。
+            var colon = line.IndexOf(':');
+            if (colon < 0) colon = line.IndexOf('：');
+            if (colon <= 0) continue;
+
+            var key = line[..colon].Trim();
+            var value = line[(colon + 1)..].Trim();
+            if (key.Length == 0 || value.Length == 0) continue;
+
+            switch (key)
+            {
+                case InfoKeys.WslVersion:
+                case InfoKeys.WslVersionEn: info.WslVersion = value; break;
+                case InfoKeys.KernelVersion:
+                case InfoKeys.KernelVersionEn: info.KernelVersion = value; break;
+                case InfoKeys.Direct3DVersion:
+                case InfoKeys.Direct3DVersionEn: info.Direct3DVersion = value; break;
+                case InfoKeys.DxCoreVersion:
+                case InfoKeys.DxCoreVersionEn: info.DxCoreVersion = value; break;
+                case InfoKeys.WindowsVersion:
+                case InfoKeys.WindowsVersionEn: info.WindowsVersion = value; break;
+                case InfoKeys.SettingsFile:
+                case InfoKeys.SettingsFileEn: info.SettingsFile = value; break;
+                case InfoKeys.SessionManagerVersion:
+                case InfoKeys.SessionManagerVersionEn: info.SessionManagerVersion = value; break;
+                case InfoKeys.SessionCount:
+                case InfoKeys.SessionCountEn:
+                    if (int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var n))
+                        info.SessionCount = n;
+                    break;
+            }
+        }
+
+        if (sessions.Count > 0) info.Sessions = sessions;
+        return info;
+    }
+
+    /// <summary>
+    /// 判定一行是否就是会话表的表头（三列且首列是 ID）。
+    /// 只在「服务器:」小节内调用。
+    /// </summary>
+    private static bool IsSessionHeader(string line)
+    {
+        var b = ComputeColumnBoundaries(line);
+        // 3 列（ID / 创建者 PID / 显示名称）。
+        if (b is null || b.Length < 4) return false;
+        // 首列必须是 ID 的各种写法；只认首列即可 —— 数据行首列是数字或短 ID，
+        // 不会恰好等于这些 caption。
+        return FindColumn(b, line, "ID") >= 0
+            || FindColumn(b, line, "标识") >= 0
+            || FindColumn(b, line, "会话 ID") >= 0;
+    }
+
+    /// <summary>
+    /// 会话表数据行 → 三个字段（ID / 创建者 PID / 显示名称）。
+    /// 段数不足（非数据行）时返回 null。
+    /// </summary>
+    private static (string Id, string CreatorPid, string DisplayName)? SplitSessionRow(string line)
+    {
+        // 按「2+ 空格」切成**最多 3 段**：显示名称是最后一列且可能含空格，
+        // 切到 3 段后它整体保留。手工切分（而不是 Regex.Split）是为了避开
+        // 各重载在 (count) / (options) / (matchTimeout) 之间的歧义。
+        var parts = SplitByWideGap(line.Trim(), 3);
+        if (parts.Count < 3) return null;
+        var id = parts[0].Trim();
+        if (id.Length == 0) return null;
+        return (id, parts[1].Trim(), parts[2].Trim());
+    }
+
+    /// <summary>
+    /// 按「连续 2 个及以上的空格 / 制表符」切分，最多产出 <paramref name="maxParts"/> 段
+    /// （最后一段保留其余全部内容，含空格）。
+    /// </summary>
+    private static List<string> SplitByWideGap(string line, int maxParts)
+    {
+        var result = new List<string>(maxParts);
+        var start = 0;
+        var i = 0;
+        while (i < line.Length)
+        {
+            // 定位一段连续空白。
+            if (line[i] != ' ' && line[i] != '\t') { i++; continue; }
+            var wsStart = i;
+            while (i < line.Length && (line[i] == ' ' || line[i] == '\t')) i++;
+            var gap = i - wsStart;
+
+            // 只有 1 个空白不算列分隔（那是字段内部的空格）。
+            if (gap < 2) continue;
+
+            // 最后一段：把剩余全部（含后续空格）并进来。
+            if (result.Count == maxParts - 1)
+            {
+                result.Add(line[start..]);
+                return result;
+            }
+            result.Add(line[start..wsStart]);
+            start = i;
+        }
+        result.Add(start <= line.Length ? line[start..] : "");
+        return result;
+    }
+
+    /// <summary>
+    /// <c>wslc system info</c> 的键名（中英双语全等匹配用）。
+    /// 抽成常量是因为 <see cref="ParseSystemInfo"/> 的 switch 需要编译期常量 case。
+    /// </summary>
+    private static class InfoKeys
+    {
+        public const string WslVersion = "WSL 版本";
+        public const string WslVersionEn = "WSL version";
+        public const string KernelVersion = "内核版本";
+        public const string KernelVersionEn = "Kernel version";
+        public const string Direct3DVersion = "Direct3D 版本";
+        public const string Direct3DVersionEn = "Direct3D version";
+        public const string DxCoreVersion = "DXCore 版本";
+        public const string DxCoreVersionEn = "DXCore version";
+        public const string WindowsVersion = "Windows 版本";
+        public const string WindowsVersionEn = "Windows version";
+        public const string SettingsFile = "设置文件";
+        public const string SettingsFileEn = "Settings file";
+        public const string SessionManagerVersion = "会话管理器版本";
+        public const string SessionManagerVersionEn = "Session manager version";
+        public const string SessionCount = "会话";
+        public const string SessionCountEn = "Sessions";
     }
 
     /// <summary>

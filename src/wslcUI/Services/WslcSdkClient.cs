@@ -298,6 +298,70 @@ public sealed class WslcSdkClient : IWslcClient, IDisposable
     public Task DeletePathAsync(string container, string path, CancellationToken ct = default) =>
         WslcCli.DeletePathAsync(container, path, ct);
 
+    // ---- 事件流历史回读（CLI bridge：SDK 3.0.1 无事件流投影）----
+    // ⚠️ 不是一次性命令：`wslc events` 永不自行退出，实现是「逐行读 + 空闲即止」，
+    // 详见 WslcCli.ListEventsAsync 的注释。持续监听走 EventStreamService（不进接口）。
+    public Task<IReadOnlyList<ContainerEvent>> ListEventsAsync(
+        string? since, CancellationToken ct = default) =>
+        WslcCli.ListEventsAsync(since, ct);
+
+    // ---- 镜像 push/tag/save/load/import（CLI bridge：SDK 3.0.1 无这些投影）----
+    // ⚠️ 命名空间限制同 prune：CLI 只作用于 CLI 命名空间（wslc 会话的 dockerd），
+    // 碰不到 SDK 自己 storagePath 下的 session 镜像。
+    public Task PushImageAsync(
+        string reference,
+        bool allTags = false,
+        bool quiet = false,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default) =>
+        WslcCli.PushImageAsync(reference, allTags, quiet, progress, ct);
+
+    public Task TagImageAsync(string source, string target, CancellationToken ct = default) =>
+        WslcCli.TagImageAsync(source, target, ct);
+
+    public Task<string> SaveImagesAsync(
+        IReadOnlyList<string> references, string outputPath, CancellationToken ct = default) =>
+        WslcCli.SaveImagesAsync(references, outputPath, ct);
+
+    public Task<string> LoadImagesAsync(
+        string inputPath, bool quiet = false, CancellationToken ct = default) =>
+        WslcCli.LoadImagesAsync(inputPath, quiet, ct);
+
+    public Task<string> ImportImageAsync(
+        string filePath, string? reference = null, CancellationToken ct = default) =>
+        WslcCli.ImportImageAsync(filePath, reference, ct);
+
+    // ---- registry 登录（CLI bridge）----
+    // 密码走 --password-stdin，绝不走 -p（命令行同机可见）。详见 WslcCli.RegistryLoginAsync。
+    public Task RegistryLoginAsync(
+        string? server, string? username, string password, CancellationToken ct = default) =>
+        WslcCli.RegistryLoginAsync(server, username, password, ct);
+
+    public Task RegistryLogoutAsync(string? server = null, CancellationToken ct = default) =>
+        WslcCli.RegistryLogoutAsync(server, ct);
+
+    // ---- 容器导出 / 强杀（CLI bridge）----
+    public Task ExportContainerAsync(
+        string container, string outputPath, CancellationToken ct = default) =>
+        WslcCli.ExportContainerAsync(container, outputPath, ct);
+
+    public Task KillContainerAsync(
+        string container, string? signal = null, CancellationToken ct = default) =>
+        WslcCli.KillContainerAsync(container, signal, ct);
+
+    // ---- 网络接入 / 断开（CLI bridge）----
+    public Task ConnectNetworkAsync(
+        string network, string container, CancellationToken ct = default) =>
+        WslcCli.ConnectNetworkAsync(network, container, ct);
+
+    public Task DisconnectNetworkAsync(
+        string network, string container, CancellationToken ct = default) =>
+        WslcCli.DisconnectNetworkAsync(network, container, ct);
+
+    // ---- 系统信息（CLI bridge：SDK 3.0.1 无「版本 / 会话」查询投影）----
+    public Task<SystemInfo> GetSystemInfoAsync(CancellationToken ct = default) =>
+        WslcCli.GetSystemInfoAsync(ct);
+
     public void Dispose()
     {
         try { _session?.Terminate(); } catch { /* best effort */ }

@@ -25,7 +25,31 @@ C# SDK 为主驱动 wslc,SDK 无投影的能力(容器列举/启停/删除/日�
 Extensions 市场、Scout 漏洞扫描与镜像仓库集成，这些 wslc 侧没有，GUI 也变不出来。
 wslcUI 的差异化在于**走 SDK + CLI 双通道**（对 SDK/CLI 命名空间分裂有针对性处理）、
 **真 TTY 终端**（ConPTY + XTerm.NET cell 渲染，非日志尾巴）、**容器内文件浏览**、
-**实时 CPU / 内存曲线**、**挂载关联双向视图**，以及**占用统计 + 一键清理**。
+**实时 CPU / 内存曲线**、**挂载关联双向视图**、**端点面板**、**容器事件实时流**，
+以及**占用统计 + 一键清理**。
+
+### 对标社区同行的取舍（2026-10-02 核实）
+
+wslc 3.0.1 GA 公告点名的社区项目里有两个同构 GUI 客户端。逐条核实后的结论：
+
+| 能力 | wslcUI | 备注 |
+|------|--------|------|
+| 容器/镜像/网络/卷生命周期 | ✅ | 已追平 |
+| 真 TTY 终端（ConPTY + XTerm.NET + 真键盘转发） | ✅ **独有** | 社区两款都没有 |
+| 容器内文件浏览 | ✅ **独有** | 同上 |
+| 挂载关联双向视图 | ✅ **独有** | 同上 |
+| 端点面板 | ✅ | 社区竞品有对标功能 |
+| 容器事件实时流 | ✅ | 竞品用 `wslc events` 做了活动流 |
+| 批量操作（Select 模式） | ✅ | — |
+| 镜像出向（push / tag / save / load / import） | ✅ | 竞品亦具备 |
+| 容器仓库登录 | ✅ | `--password-stdin`，不落盘 |
+| `container export` / `kill`、`network connect`/`disconnect` | ✅ | — |
+| **Compose 编排** | ❌ **不做** | wslc 自身无 `compose`（官方称「呼声最高、无时间表」）。竞品是**自己写编排层**（读 yaml → 依赖排序 → 健康门控），属另写一个产品 |
+| **k3s 单节点集群** | ❌ **不做** | wslc 无任何编排/K8s 命令，结构性缺口 |
+| **WSL 引擎控制**（重启会话/装更新/改存储位置） | ❌ **不做** | wslc 只有 `system session {enter,list,run,shell,terminate}` + `settings`（打开 yaml），无「重启引擎/检查更新」命令；硬做等于自己拼 `wsl.exe` |
+| **Intune 企业策略感知** | ❌ **不做** | 需企业环境才有意义，个人开发机永远走不到该分支 |
+| **AI 助手 / 诊断** | ❌ **不做** | 与「纯本地、无账号无 API Key」的定位冲突 |
+| 镜像更新徽章（digest 比对 registry） | ❌ | 需要访问外部 registry，与定位冲突 |
 
 ## 技术栈
 
@@ -70,6 +94,39 @@ wslcUI 的差异化在于**走 SDK + CLI 双通道**（对 SDK/CLI 命名空间�
 - 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 3.0.1 仍不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
   ⚠️ **必须带 `-a`**（2026-10-02 实测修正）：`wslc stats` **不带参数时只返回一个容器**，统计页此前因此永远只显示 1 行 —— 存量 bug，已改为 `stats -a`（返回全部容器，含已停止的，其值为真实的 0）。
 - **统计页实时曲线（2026-10-02 新增）**：wslc 的 stats 不流式，所以「开始采样」按钮每 3 秒轮询一次 `wslc stats -a --format json` 并自己攒历史（每容器最多 60 点）。详情面板按选中容器画 **CPU / 内存两条独立曲线**（刻意不叠在一张图里 —— 各自按本批最大值缩放，叠起来会诱使人跨曲线比高度）。曲线逻辑是纯函数 `Services/SparklineGeometry.cs`（不依赖任何 UI 类型，可单测）。离开统计页自动停采样。
+- **活动流页（2026-10-02 新增）**：`wslc events` 实时流。事件行格式
+  `<ISO8601纳秒> <类别> <动作> <ID> (key=value, …)`，解析器
+  `Services/EventLineParser.cs`（纯函数）。实测动作集：`container create|start|kill|stop|destroy`、
+  `network connect|disconnect`。`value` 内可含逗号与尖括号（`maintainer=NGINX Docker Maintainers <…>`），
+  故按「合法 `key=` 前缀」定位边界而非简单 split 逗号。
+  ⚠️ **两个实测坑**：
+  ① **事件流永不退出** —— 即使带 `--since` 也继续挂在 stdout 等新事件
+  （`timeout` 杀它得到退出码 124），所以**绝不能 `ReadToEndAsync`**；
+  历史回读用 `ListEventsAsync` 的「逐行异步读 + 空闲 400ms 即止」；
+  页面离开时 `Stop()`，否则留下常驻 `wslc.exe`。
+  ② `timeout N wslc events > file` **读到 0 行**（管道缓冲），但同一命令用
+  `OutputDataReceived` 逐行读立刻拿到数据 —— **不是 wslc 缺陷**，别据此误判。
+  纳秒时间戳超出 `DateTimeOffset` 分辨率：低 2 位另存 `SubTickNanoseconds`
+  参与 `SortKey` 全序比较，否则同一 100ns 内的事件排序不稳定。
+- **端点面板（2026-10-02 新增）**：聚合全部**运行中**容器已发布到宿主的端口，
+  一键复制 `ip:port` / 打开浏览器。数据来自容器行的 Ports 列，经
+  `Services/EndpointParser.cs` 纯函数解析（不额外调 CLI）。真实列形态
+  `127.0.0.1:18096->80/tcp, 127.0.0.1:18095->443/tcp`；绑定 `0.0.0.0` 的端点
+  会给出「局域网可访问」警告。
+  打开外部程序走 `Process.Start` + `UseShellExecute=true` 而非 WinRT
+  `Launcher.LaunchUri` —— 本项目是 **unpackaged**（无包身份），后者默认处理器解析不可靠。
+- **批量操作 Select 模式（2026-10-02 新增）**：容器页「多选」进入多选态，
+  批量启动/停止/删除。`SelectionMode` 在 `SelectionChanged` 里切（单选时与原行为一致），
+  选中项名字经 `SetBulkSelection` 汇成唯一事实源；批量动作**逐个容错**——
+  单个失败不中断其余，结束后汇总成功/失败计数。
+- **镜像出向与容器强杀（2026-10-02 新增）**：`image push [-a] / tag / save / load / import`、
+  `registry login --password-stdin / logout`、`container export / kill`、
+  `network connect / disconnect`、`system info` 全部桥接。
+  ⚠️ 与 docker 的参数形态有实质差异（已逐条 `--help` 核实）：
+  `push` 只有**一个**位置参数（无「源+目标」双参形态）；`save` 的 `<image>...` 必填且
+  **没有「导出全部」**；`load` 用 `-i`；`import` 的 tar 是**必填位置参数**且**没有 `-o`**。
+  **登录必须走 `--password-stdin`** —— `-p` 会把密码暴露在进程命令行上；
+  密码只经管道进子进程，不落盘、不进日志、不进异常消息。
 - **容器内文件浏览（2026-10-02 新增）**：独立窗口 `ContainerFilesWindow`（对标 Docker Desktop 的 Container File Explorer 的**子集**：浏览 / 上传 / 下载 / 删除，不含在线编辑）。列目录走 `wslc exec <name> ls -la <path>`，搬文件走 `wslc container cp`。仅对**运行中**容器可用（`exec` 需要容器在跑）。
   ⚠️ **wslc 的 `container cp` 与 docker 语义不同**（实测 2026-10-02）：上传目标**必须是容器内已存在的目录**且**不能指定目标文件名**；`cp file ctr:/tmp/new.txt` 会报 `ERROR_PATH_NOT_FOUND`，`cp - ctr:/tmp/new.txt`（stdin 形态）同理。因此 UI 只提供「上传到当前目录」，文件名沿用本地文件名。
 - 镜像构建（`wslc build -t <tag> <context>`，`WslcCli.BuildImageAsync`，逐行流式回传日志）已实现，「构建」页含上下文目录选择 + 标签 + 滚动日志。
@@ -114,17 +171,20 @@ wslcUI/
 ├── src/wslcUI/
 │   ├── wslcUI.csproj
 │   ├── App.xaml(.cs)             # DI 容器 + 启动
-│   ├── MainWindow.xaml(.cs)      # 主窗口：NavigationView 三栏（侧栏 220 + 内容 + 详情面板 340 + 日志抽屉 + 状态栏；7 page：容器/镜像/网络/卷/统计/构建/维护，x:Bind）
+│   ├── MainWindow.xaml(.cs)      # 主窗口：NavigationView 三栏（侧栏 220 + 内容 + 详情面板 340 + 日志抽屉 + 状态栏；9 page：容器/镜像/网络/卷/统计/构建/维护/端点/活动，x:Bind）
 │   ├── TerminalWindow.xaml(.cs)  # 交互式终端窗口（exec / attach）
 │   ├── ContainerFilesWindow.xaml(.cs) # 容器内文件浏览窗口（浏览/上传/下载/删除）
 │   ├── Program.cs                # WinUI 3 入口（Windows App SDK 2.4 bootstrap）
 │   ├── app.manifest
-│   ├── Models/                   # ContainerInfo (+Ports/CreatedAt/stats/StatusKind/Mounts) / ContainerMount / ContainerFileEntry / ImageInfo (+Digest/Reference) / NetworkInfo / VolumeInfo / StatInfo
+│   ├── Models/                   # ContainerInfo (+Ports/CreatedAt/stats/StatusKind/Mounts) / ContainerMount / ContainerFileEntry / ImageInfo (+Digest/Reference) / NetworkInfo / VolumeInfo / StatInfo / EndpointInfo / ContainerEvent / SystemInfo
 │   ├── Converters/
 │   ├── Services/
 │   │   ├── IWslcClient.cs        # 后端抽象（适配器接口）
 │   │   ├── WslcSdkClient.cs      # 真实后端：SDK 覆盖的操作 + 转发 WslcCli
 │   │   ├── WslcCli.cs            # CLI 桥接 + 表格/JSON 解析器 + 错误码中文映射
+│   │   ├── EventStreamService.cs  # `wslc events` 长驻流（异步逐行读 + 优雅停止）
+│   │   ├── EventLineParser.cs    # 事件行 → ContainerEvent（纯函数，含纳秒时间戳与全序 SortKey）
+│   │   ├── EndpointParser.cs     # 端口列 → 端点行（纯函数）
 │   │   ├── SizeParser.cs         # 镜像 SIZE 字符串 ⇄ 字节数（纯函数，维护页占用合计用）
 │   │   ├── SparklineGeometry.cs  # 采样值 → 折线坐标（纯函数，不依赖 UI 类型）
 │   │   ├── ConPty.cs             # Windows Pseudoconsole P/Invoke（真 TTY，零依赖）+ 健康预检

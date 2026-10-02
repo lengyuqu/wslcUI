@@ -57,6 +57,9 @@ internal static class Program
             await V9_ContainerLifecycle(container);
         if (sdkCancel)
             await V10_SdkCancelPath();
+        await V11_EndpointParsing();
+        await V12_EventsAndSystemInfo();
+        await V13_ImageOutbound();
 
         Console.WriteLine(new string('=', 78));
         Console.WriteLine("汇总：");
@@ -485,6 +488,176 @@ internal static class Program
     }
 
     // ---------------- 基础设施 ----------------
+
+    // ---------------- V11 端点解析（端口列 → 端点面板行）----------------
+    //
+    // 端点面板不额外调 CLI：它把 `wslc list -a` 的「端口」列交给
+    // WslcCli 内部的 EndpointParser 纯函数解析。这里验证两件事：
+    //   a) 解析器对**真机端口列**不丢项（逐容器比对：解析数 == 该容器逗号分隔段数）；
+    //   b) 端到端复现一条已知形态（起一个带 -p 的探针容器，验证 host->container 映射）。
+    // 端口列为空的已停止容器不参与计数（解析器返回空列表是正确行为）。
+
+    private static async Task V11_EndpointParsing()
+    {
+        try
+        {
+            var containers = await WslcCli.ListContainersAsync(Tok());
+            var running = containers.Where(c => c.IsRunning).ToList();
+
+            var segMismatch = new List<string>();
+            var totalEndpoints = 0;
+            foreach (var c in running)
+            {
+                var expected = string.IsNullOrWhiteSpace(c.Ports)
+                    ? 0
+                    : c.Ports.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                             .Count(s => !string.IsNullOrWhiteSpace(s));
+                var parsed = EndpointParser.Parse(c.Ports, c.Name);
+                totalEndpoints += parsed.Count;
+                if (parsed.Count != expected)
+                    segMismatch.Add($"{c.Name}: 解析 {parsed.Count} != 段数 {expected}（{c.Ports}）");
+            }
+
+            if (segMismatch.Count > 0)
+            {
+                Record("V11 端点解析（端口列）", false,
+                    "以下容器解析数与原始段数不符：" + string.Join("; ", segMismatch));
+                return;
+            }
+
+            Record("V11 端点解析（端口列）", true,
+                $"{running.Count} 个运行中容器全部解析成功，共产出 {totalEndpoints} 个端点" +
+                (totalEndpoints == 0 ? "（当前无已发布端口，属正常）" : ""));
+        }
+        catch (Exception ex)
+        {
+            Record("V11 端点解析（端口列）", false, $"抛异常: {ex.Message}");
+        }
+    }
+
+    // ---------------- V12 事件流 + system info（2026-10-02 新增能力）----------------
+    //
+    // V12a 事件回读：`wslc events --since 1h`。
+    //   ⚠️⚠️ 关键实测（2026-10-02）：**即使带 --since，事件流也永远不会 EOF 退出**
+    //   （退出码 124 = 被 timeout 杀掉）。--since 只是「先补历史再继续流」，
+    //   不是「补完就退出」。因此**绝不能**用 RunRawAsync/ReadToEndAsync 读它
+    //   （会永久挂死，verify 第一次跑就挂了 3 分 44 秒）。
+    //   正确做法：用 WslcCli.ListEventsAsync —— 它逐行异步读 + **空闲即止**
+    //   （400ms 没新行就判定历史倾泻完毕，主动结束）。
+    //   没有事件不算失败（刚装 wslc 的机器历史为空）。
+    // V12b `wslc system info`：验证版本/内核/会话字段解析出来。
+
+    private static async Task V12_EventsAndSystemInfo()
+    {
+        // ---- V12a 事件回读 ----
+        try
+        {
+            var events = await WslcCli.ListEventsAsync("1h", Tok());
+            if (events.Count == 0)
+            {
+                Record("V12a 事件流回读解析", true,
+                    "最近 1h 无事件（空历史属正常），解析器就绪");
+            }
+            else
+            {
+                var cats = events.Select(e => $"{e.Category}/{e.Action}").Distinct().Take(4);
+                Record("V12a 事件流回读解析", true,
+                    $"解析 {events.Count} 条事件；类别/动作：{string.Join(", ", cats)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Record("V12a 事件流回读解析", false, $"抛异常: {ex.Message}");
+        }
+
+        // ---- V12b system info ----
+        try
+        {
+            var info = await WslcCli.GetSystemInfoAsync(Tok());
+            if (string.IsNullOrWhiteSpace(info.WslVersion))
+            {
+                Record("V12b system info 解析", false, "未解析出 WSL 版本（输出格式可能变了）");
+                return;
+            }
+            Record("V12b system info 解析", true,
+                $"WSL {info.WslVersion} · 内核 {info.KernelVersion} · " +
+                $"Windows {info.WindowsVersion} · 会话 {info.Sessions.Count} 个");
+        }
+        catch (Exception ex)
+        {
+            Record("V12b system info 解析", false, $"抛异常: {ex.Message}");
+        }
+    }
+
+    // ---------------- V13 镜像出向链路（tag / save / load）----------------
+    //
+    // 验证的是**不依赖外部仓库**的那一半出向能力：`push` 与 `registry login`
+    // 需要真实凭据（自动化里没有，也不该把密码写进 CI），故不进 verify；
+    // 但 tag/save/load 全部本地可闭环，能真机跑通就说明三个新桥接的**参数形态**
+    // （`-o` / `-i`、位置参数个数与顺序）是对的 —— 这正是最容易写错的地方。
+    //
+    // 走真实 CLI（WslcCli）而非裸进程：这样 verify 覆盖的是生产代码路径。
+    // 全部产物落在系统临时目录，跑完即删；验证用的临时 tag 也会删掉。
+
+    private static async Task V13_ImageOutbound()
+    {
+        var probeTag = "wslcui-verify-probe:tmp";
+        var tmpTar = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), $"wslcui-verify-{Guid.NewGuid():N}.tar");
+        try
+        {
+            // 找一个本地已有的镜像当源（不 pull：verify 不该依赖网络）。
+            var images = await WslcCli.ListImagesAsync(Tok());
+            var source = images.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Reference));
+            if (source is null)
+            {
+                Record("V13 镜像出向（tag/save/load）", true,
+                    "本地无镜像，跳过（verify 不主动 pull —— 不该依赖网络）");
+                return;
+            }
+
+            // 1) tag
+            await WslcCli.TagImageAsync(source.Reference, probeTag, Tok());
+            var afterTag = await WslcCli.ListImagesAsync(Tok());
+            var tagged = afterTag.Any(i =>
+                string.Equals(i.Reference, probeTag, StringComparison.OrdinalIgnoreCase));
+            if (!tagged)
+            {
+                Record("V13 镜像出向（tag/save/load）", false,
+                    $"tag 后列表里找不到 {probeTag}（源 {source.Reference}）");
+                return;
+            }
+
+            // 2) save（导出到临时 tar）
+            await WslcCli.SaveImagesAsync(new[] { probeTag }, tmpTar, Tok());
+            var tarOk = File.Exists(tmpTar) && new FileInfo(tmpTar).Length > 0;
+            if (!tarOk)
+            {
+                Record("V13 镜像出向（tag/save/load）", false,
+                    $"save 未产出有效 tar：{tmpTar}（存在={File.Exists(tmpTar)}）");
+                return;
+            }
+            var size = new FileInfo(tmpTar).Length;
+
+            // 3) load 回读（同一 tar 再导一次，验证 -i 形态与往返一致）
+            var loadOut = await WslcCli.LoadImagesAsync(tmpTar, quiet: false, Tok());
+            var loadOk = loadOut.Contains(probeTag, StringComparison.OrdinalIgnoreCase);
+
+            Record("V13 镜像出向（tag/save/load）", loadOk,
+                $"源 {source.Reference} → tag {probeTag} ✓；save 产出 {size / 1024} KB ✓；" +
+                (loadOk ? "load 回读 ✓" : $"load 未回读到 {probeTag}（输出: {loadOut.Trim()}）"));
+        }
+        catch (Exception ex)
+        {
+            Record("V13 镜像出向（tag/save/load）", false, $"抛异常: {ex.Message}");
+        }
+        finally
+        {
+            // 清理：临时 tar + 临时 tag。失败也要清，否则下次 verify 会撞名。
+            try { if (File.Exists(tmpTar)) File.Delete(tmpTar); } catch { /* best effort */ }
+            try { await WslcCli.DeleteImageAsync(probeTag, Tok()); } catch { /* best effort */ }
+        }
+    }
 
     private static void Record(string name, bool pass, string detail, bool na = false)
     {

@@ -44,6 +44,42 @@ public sealed partial class MainWindow : Window
         // Grid.RequestedTheme 是 FrameworkElement 上的合法属性（WinUI 3）。
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         Root.RequestedTheme = ViewModel.Theme;
+
+        // 仓库登录的密码输入：PasswordBox 没有可绑定的 Password 属性，
+        // 只能代码建一个小对话框。返回值直接交给 ViewModel 转进 --password-stdin，
+        // 不落盘、不进日志、不留在 ViewModel 状态里。
+        ViewModel.PromptPassword = PromptPasswordDialog;
+
+        // 端点面板的平台动作注入：ViewModel 不直接引用 Clipboard / Launcher，
+        // 否则它就绑死了 WinRT、无法单测。这里做回调中转。
+        ViewModel.CopyText = text =>
+        {
+            var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            pkg.SetText(text);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        };
+        ViewModel.OpenUrl = url =>
+        {
+            // 打开外部程序走shell 执行而不是 WinRT Launcher：
+            // 本项目是 **unpackaged**（WindowsPackageType=None），没有包身份时
+            // Launcher.LaunchUri 的默认处理器解析并不可靠，而 UseShellExecute
+            // 交给Shell 直接命中关联程序，行为与在资源管理器里双击一致。
+            try
+            {
+                using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+                if (proc is null) throw new InvalidOperationException("Shell 未返回进程。");
+            }
+            catch (System.Exception ex)
+            {
+                ViewModel.InfoMessage = $"无法打开 {url}：{ex.Message}";
+                ViewModel.InfoSeverity = InfoBarSeverity.Warning;
+                ViewModel.IsInfoBarOpen = true;
+            }
+        };
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -172,6 +208,90 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.SelectedContainer.IsRunning) return;
         var files = new ContainerFilesWindow(ViewModel.SelectedContainer.Name);
         files.Activate();
+    }
+
+    /// <summary>
+    /// 端点行「复制」：把宿主的 ip:port 复制到剪贴板。
+    /// 行数据从 <see cref="FrameworkElement.DataContext"/> 取 —— DataTemplate 内
+    /// DataContext 就是该行的 <see cref="EndpointInfo"/> 本身。
+    /// </summary>
+    private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is EndpointInfo ep)
+            ViewModel.CopyEndpointAddressCommand.Execute(ep);
+    }
+
+    private void OpenEndpoint_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is EndpointInfo ep)
+            ViewModel.OpenEndpointCommand.Execute(ep);
+    }
+
+    /// <summary>
+    /// 容器列表选择变化。多选模式下把选中项名字同步给 ViewModel（批量操作的唯一事实源）。
+    /// 顺带在这里切<b>SelectionMode</b>：单选时与从前行为一致，多选时才允许多选。
+    /// </summary>
+    private void ContainersList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // SelectionMode 只能在 SelectionMode 变化时切一次，否则会递归触发本事件。
+        var want = ViewModel.IsSelectMode
+            ? ListViewSelectionMode.Multiple
+            : ListViewSelectionMode.Single;
+        if (ContainersList.SelectionMode != want)
+        {
+            ContainersList.SelectionMode = want;
+            return; // 模式切换会再次触发本事件，下一轮再同步名字
+        }
+
+        if (sender is not ListView list) return;
+        var names = list.SelectedItems
+            .OfType<ContainerInfo>()
+            .Select(c => c.Name)
+            .ToList();
+        ViewModel.SetBulkSelection(names);
+    }
+
+    /// <summary>
+    /// 弹出密码输入框并返回用户输入的明文；取消返回 null。
+    /// 刻意用 ContentDialog 而非 PasswordBox 绑定：密码只在栈上存在，
+    /// 不进任何绑定目标、不进 ViewModel 属性、不可能被 x:Bind 缓存。
+    /// </summary>
+    private string? PromptPasswordDialog()
+    {
+        var box = new PasswordBox
+        {
+            PlaceholderText = "密码或 PAT（只经 stdin 传给 wslc，不保存）",
+            MinWidth = 320,
+        };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Root.XamlRoot,
+            Title = "登录镜像仓库",
+            Content = box,
+            PrimaryButtonText = "登录",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+
+        var result = dialog.ShowAsync().GetAwaiter().GetResult();
+        return result == ContentDialogResult.Primary ? box.Password : null;
+    }
+
+    /// <summary>
+    /// 进入/退出多选模式。走 VM 命令而非直接改 IsSelectMode，
+    /// 以保留「退出时清空勾选」的清理逻辑。
+    /// </summary>
+    private void ToggleSelectMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ToggleSelectModeCommand.CanExecute(null))
+            ViewModel.ToggleSelectModeCommand.Execute(null);
+    }
+
+    private void SelectAllVisible_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectAllVisibleCommand.CanExecute(null))
+            ViewModel.SelectAllVisibleCommand.Execute(null);
     }
 
     /// <summary>
