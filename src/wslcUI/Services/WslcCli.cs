@@ -799,16 +799,20 @@ internal static class WslcCli
         try { stderr = await stderrTask.ConfigureAwait(false); }
         catch (OperationCanceledException) { stderr = ""; }
 
-        if (!proc.HasExited)
+        // 进程还在跑 => 是「空闲即止」之后我们主动 Kill 的（事件流永不 EOF），
+        // 此时 ExitCode 会是 -1，没有任何诊断价值，不能据此判定失败。
+        bool selfExited = proc.HasExited;
+        if (!selfExited)
         {
             try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
         }
         try { await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
         catch { /* best effort */ }
 
-        // 有事件就不算失败（窗口内确实发生过事）；一条都没有且 wslc 报错才抛，
-        // 否则「最近 5 分钟无事件」会被误报成错误。
-        if (collected.Count == 0 && proc.ExitCode != 0)
+        // 有事件就不算失败（窗口内确实发生过事）；一条都没有时，只有「wslc 自己
+        // 退出且非 0」才算真失败 —— 「最近 1h 无事件」的空历史不该被误报成错误
+        // （verify V12a 回归，2026-10-06）。
+        if (collected.Count == 0 && selfExited && proc.ExitCode != 0)
             throw CliFailed("wslc events", proc.ExitCode, stderr);
 
         return collected;
