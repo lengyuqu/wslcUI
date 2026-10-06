@@ -27,7 +27,15 @@ public class Program
         var minVersion = new PackageVersion(0x0002000400000000UL); // >= 2.4.0.0
         var baseDir = System.AppContext.BaseDirectory;
 
-        if (!Bootstrap.TryInitialize(majorMinor, versionTag, minVersion,
+        // Self-contained builds (WindowsAppSDKSelfContained=true) ship the Windows App
+        // SDK runtime next to the exe and register it via a regfree-COM manifest, so the
+        // bootstrapper must NOT run: activating the *system-installed* WindowsAppRuntime
+        // package on top of the local copy loads two runtime versions into one process,
+        // which fail-fasts inside CoreMessagingXP.dll (0xC0000602, verified 2026-10-06).
+        var selfContained = System.IO.File.Exists(
+            System.IO.Path.Combine(baseDir, "Microsoft.WindowsAppRuntime.dll"));
+
+        if (!selfContained && !Bootstrap.TryInitialize(majorMinor, versionTag, minVersion,
                 Bootstrap.InitializeOptions.OnNoMatch_ShowUI, out int hr))
         {
             System.IO.File.WriteAllText(
@@ -49,7 +57,10 @@ public class Program
         }
         finally
         {
-            Bootstrap.Shutdown();
+            if (!selfContained)
+            {
+                Bootstrap.Shutdown();
+            }
         }
     }
 }

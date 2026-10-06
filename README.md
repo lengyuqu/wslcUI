@@ -61,6 +61,27 @@ wslc 3.0.1 GA 公告点名的社区项目里有两个同构 GUI 客户端。逐�
 | 依赖注入 | Microsoft.Extensions.DependencyInjection |
 | 容器后端 | `Microsoft.WSL.Containers` 3.0.1 (wslc SDK, **GA**) + `wslc` CLI 桥接 |
 
+## 下载即用（预编译包）
+
+到 [Releases](https://github.com/lengyuqu/wslcUI/releases) 下载 `wslcUI-v1.0.0-win-x64.zip`，
+解压到任意目录后双击 `wslcUI.exe` —— **不需要安装 .NET 运行时，也不需要安装 Windows App SDK 运行时**
+（自包含发布：.NET 10 与 Windows App SDK 2.4 都随包分发；解压后约 235 MB，zip 约 88 MB）。
+
+唯一前置：**WSL2 + `wslc` ≥ 2.9.9**（推荐 3.0.1 GA），见下方「环境前置」第 3 条。
+
+自己构建自包含包：
+
+```bash
+dotnet publish src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release -r win-x64 \
+  --self-contained true -p:WindowsAppSDKSelfContained=true -o bin/publish/win-x64
+```
+
+⚠️ `dotnet publish` 对 WinUI 3 有已知遗漏：**不产出** `App.xbf` / `MainWindow.xbf` /
+`TerminalWindow.xbf` / `ContainerFilesWindow.xbf` / `wslcUI.pri`，需从
+`src/wslcUI/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/` 补齐后才能运行；
+且自包含部署下**不能**调用 Windows App SDK bootstrapper（详见 [AGENTS.md](AGENTS.md) 第 3 节——
+两者都会导致启动即崩）。
+
 ## 环境前置
 
 1. **Visual Studio 2026 (18.x) / 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
