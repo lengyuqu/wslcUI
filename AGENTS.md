@@ -151,6 +151,8 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 ### 数据刷新与绑定模式约定
 
 - `ContainerInfo` 实现 `INotifyPropertyChanged`：**刷新走就地合并**（`MainViewModel.UpdateContainersInPlace`，按 Name 复用实例 + 差量增删），**不要改回整体替换 `Containers` 集合**——那会让 `SelectedContainer` 脱离列表，触发 ListView 布局期异步清空选中的竞态。
+- **`Filtered*` 五个视图集合同样必须保实例**（`MainViewModel.SyncInView`：按引用做 Remove/Insert/Move 差量，**不要改回 `FilteredContainers = new ObservableCollection<…>(…)`**）。给视图属性赋新集合 = ListView 的 `ItemsSource` 换实例 → 选中被清空，而 `SelectedItem` 是 TwoWay → null 回写进 ViewModel（详情面板空白、`LogTarget` 清空、inspect 的 `_inspectCts` 取消），上一条精心做的"复用实例保选中"就被这一行抵消，用户每次刷新都要重新点一遍行。
+- 选中状态**不依赖**「ListView 在 Remove 时会不会回写 null」这类版本相关行为，由 `ApplyFilter` 自己收口：容器页对已离开视图的选中**显式置 null**（宁可丢选中，也不能让停止/删除/终端打到已消失的容器）；镜像/网络/卷/stats 四页每轮刷新都是**新模型实例**，故同步前记下业务键（`Reference` / `Name` / `Container`）、同步后按键重指到新实例，重指不到才清空。`SyncInView` 是纯函数，回归由 `tests/wslcUI.Tests/ViewModels/SyncInViewTests.cs` 钉住（无变化零通知 / 存活项同实例 / 重排不出现 Add+Reset）。
 - 因为行不再重建，容器行模板与详情面板的所有可变字段绑定**必须 `Mode=OneWay`**（依赖 INPC）；`OneTime` 只可用于 `Name`/`Id` 这类不可变字段，或镜像/网络/卷页（模型仍是整体替换 + 行重建）。
 - `MergeStatsIntoContainers` 对不在 stats 快照里的容器会重置回 `—` + `HasStats=false`，防止显示过期数值。
 - NavigationView 选中与 `VM.CurrentPage` 双向同步：用户点击走 `NavView_SelectionChanged` → `NavigateCommand`；非导航入口切页（如空态「去拉取镜像」）由 `SyncNavSelection` 反向同步高亮。`Tag` 值必须与 `ResourcePage` 枚举名一致。
@@ -268,7 +270,7 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 - **⚠️ 命名空间隔离（2.9.9 实测结论，改代码前必读）**：SDK `Session`（storagePath，如 `%LOCALAPPDATA%\wslcUI\session`）与 `wslc` CLI（WSL2 rootfs / 默认会话）**互不可见**。实测：SDK 拉的镜像、建的容器，`wslc list -a` / `wslc images` 都看不到；反之 CLI 的容器 `Session.OpenContainer` 也打不开。因此：容器列举/启停/删除/日志的 CLI 桥接**不可**迁移到 SDK（UI 管理的是 CLI 命名空间容器）；`Session.OpenContainer(name, mode)` 只能操作 SDK 会话自己 `CreateContainer` 的容器（2.9.9 新增，已实测：可打开、`Stop(Signal, TimeSpan)`、`Delete(Force)` 可用，但 **Stop 后不能 Start**，抛 `InvalidOperationException`）。
 - **2.9.9 SDK 相对 2.9.3 的新 API（反射 diff + 实测）**：`Session.OpenContainer(name, mode)`、`Session.DeleteImage(nameOrId)`、`PushImage(Async)`+`PushImageOptions`、`TagImage`+`TagImageOptions`、`ImportImage(Async)(path, name)`、`LoadImage(Async)(path)`、`CreateVhdVolume`/`DeleteVhdVolume`、`Authenticate(Uri,user,pass)`、事件 `Terminated`/`ProcessCrashed`。**其中只有镜像删除被 wslcUI 采用**：`DeleteImageAsync` 现在是命名空间感知的 —— reference 命中 `Session.GetImages()`（忽略大小写）则 `Session.DeleteImage`，否则回退 `wslc image rm`（修复了"SDK 镜像 UI 可见但删不掉"的 bug）。其余新 API 因命名空间分裂、UI 合并列表下对 CLI 镜像无意义而暂未接入（Tag/Push/Import/Load 如需接入，需在 UI 上区分镜像来源或只对 SDK 镜像开放）。
 - **CLI 解析器已联调并有回归保护**：`WslcCli` 各解析器（`ParseContainerList` / `ParseNetworkList` / `ParseVolumeListJson` / `ParseStats` / `ParseImageList`）的真机输出列格式已核对（verify V2.1~V2.5），且 `TableParserTests` 以真机输出原文为夹具做单元回归；`wslc start/stop <name>` 非零退出抛异常已就位。
-- **`WslcCli` 的两条约定不要回退**：① `RunAsync` 必须**并发**排空 stdout/stderr（两个 `ReadToEndAsync` 先启动再 `Task.WhenAll`）——串行 `await` 会在子进程写满 stderr 管道缓冲（4 KB）时双向等待死锁；② `ExePath` 走三级解析（环境变量 `WSLCUI_WSLC_EXE` → `C:\Program Files\WSL\wslc.exe` → PATH 扫描），**不要改回硬编码常量**，否则 wslc 装在非默认位置时整组 CLI 桥接失效、且报错文案误导成「请先安装 WSL」。`BuildImageAsync` 与 `RunAsync` 共用 `EnsureExe()` 前置守卫。
+- **`WslcCli` 的三条约定不要回退**：① `RunAsync` 必须**并发**排空 stdout/stderr（两个 `ReadToEndAsync` 先启动再 `Task.WhenAll`）——串行 `await` 会在子进程写满 stderr 管道缓冲（4 KB）时双向等待死锁；② `ExePath` 走三级解析（环境变量 `WSLCUI_WSLC_EXE` → `C:\Program Files\WSL\wslc.exe` → PATH 扫描），**不要改回硬编码常量**，否则 wslc 装在非默认位置时整组 CLI 桥接失效、且报错文案误导成「请先安装 WSL」。`BuildImageAsync` 与 `RunAsync` 共用 `EnsureExe()` 前置守卫；③ **每一个进程创建点都要带 `ct.Register(() => proc.Kill(...))` 取消安全网**（现覆盖 `RunCoreAsync` / `RunStreamingAsync` / `BuildImageAsync` / `ListEventsAsync`）——`using var proc` 只 Dispose 不 Kill，取消后没人再读 stdout，子进程就写在 4 KB 管道上永久阻塞成孤儿。`ListEventsAsync` 尤其致命：它的两处取消出口都在方法末尾那次主动 Kill **之前**解开栈，而 `wslc events` 又永不自行退出，漏掉这道网等于每取消一次留一个僵尸进程（它的文档注释一直承诺有这道网，2026-10-09 审计才核对出代码没做）。
 - MainWindow 当前用 `IWslcClient`，切换 Fake/SDK 时 UI 代码不应改动。
 - **⚠️ `wslc events` 永不退出（2026-10-02 实测，两个坑一起记）**：
   ① **带 `--since` 也不自行退出** —— 它只是「先补历史再继续挂在 stdout 等新事件」，
@@ -293,6 +295,23 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 - **unpackaged 下打开外部程序用 `Process.Start` + `UseShellExecute=true`**，不要用 WinRT
   `Launcher.LaunchUri`（无包身份时默认处理器解析不可靠）。本项目
   `WindowsPackageType=None`，这是硬约束。
+- **⚠️ UI 线程绝不能同步等 ContentDialog / FilePicker（2026-10-09 审计抓到两处死锁）**：
+  `Program.Main` 装了 `DispatcherQueueSynchronizationContext`，`[RelayCommand]` 的 await 续体
+  就在 UI 线程上；此时 `dialog.ShowAsync().GetAwaiter().GetResult()` 或
+  `picker.PickSaveFileAsync()?.GetAwaiter().GetResult()` 是一边占着 UI 线程、一边等只有 UI
+  线程 pumping 才能完成的对话框/选择器 → **整个窗口永久冻死，无异常、无日志，只能强杀进程**。
+  命中过的两条路径：镜像仓库登录的密码框（`MainWindow.PromptPasswordDialog`，经
+  `ViewModel.PromptPassword` 回调）、容器导出的保存框（`MainViewModel.PickSavePathAsync`，
+  原名 `PickSavePath` 就是同步形态）。
+  正确形态是异步一路 `await`，回调签名用 `Func<Task<string?>>`（参照
+  `MainViewModel.PickBuildContextAsync`）。同理 `.Wait()` / `.Result` 也不许出现在命令链路上
+  —— 唯一例外是 `Task.WhenAll` 之后读已完成任务的 `.Result`（`WslcCli.RunAsync` 就靠这个）。
+- **⚠️ `TerminalView` 的 `BufferChanged` 回调必须 `InvalidateMeasure()`**：`Render()` 的调用点
+  只有 `Loaded` 和 `MeasureOverride`，回调里只置 `_dirty` 就再没有第二次重绘 —— 终端停在开窗
+  那一帧，直到用户拖动窗口尺寸才突然出内容。布局系统会合并同一渲染周期内的多次
+  `InvalidateMeasure`，所以逐行 `BufferChanged` 不会放大开销，别为了"优化"把它去掉。
+  这个坑藏得极深：终端视觉验收长期被本机 ConPTY 机器级故障挡住（verify V5~V7 记 NA），
+  而单测只覆盖 XTerm.NET 的数据层、不碰这块 Panel。
 
 ## 7. 实现进度与剩余项
 
