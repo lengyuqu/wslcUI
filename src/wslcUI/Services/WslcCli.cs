@@ -359,6 +359,12 @@ internal static class WslcCli
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+        // 取消即杀进程：build 可以跑几分钟，取消后本方法退出、再没人读 stdout，
+        // 子进程会写在 4 KB 管道缓冲上永久阻塞成孤儿（`using` 只 Dispose 不 Kill）。
+        using var _reg = ct.Register(() =>
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        });
         proc.OutputDataReceived += (_, e) =>
         {
             if (e.Data is not null) progress?.Report(e.Data);
@@ -754,6 +760,13 @@ internal static class WslcCli
 
         using var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
+        // 取消即杀进程：`wslc events` **永不自行退出**（见方法头注释），而下面两处
+        // 取消出口（WaitAsync(ct) / ThrowIfCancellationRequested）都在末尾那次
+        // 主动 Kill 之前就把栈解开了 —— 没有这道安全网，取消一次就漏一个僵尸进程。
+        using var _reg = ct.Register(() =>
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
+        });
 
         var collected = new List<ContainerEvent>();
         var sawAny = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);

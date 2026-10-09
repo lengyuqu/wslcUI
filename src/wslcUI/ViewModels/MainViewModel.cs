@@ -328,7 +328,11 @@ public partial class MainViewModel : ObservableObject
     /// 登录镜像仓库。密码通过回调交给 UI 层读取（PasswordBox 无法双向绑定），
     /// 拿完即丢 —— 不进 ViewModel 状态、不写盘、不进日志。
     /// </summary>
-    public Func<string?>? PromptPassword { get; set; }
+    /// <remarks>
+    /// 回调必须是 <see cref="Task{TResult}"/>：UI 层的 ContentDialog 只能在 UI 线程
+    /// 上 await，同步形态（<c>GetAwaiter().GetResult()</c>）会当场死锁整个窗口。
+    /// </remarks>
+    public Func<Task<string?>>? PromptPassword { get; set; }
 
     [RelayCommand]
     private async Task RegistryLoginAsync()
@@ -339,7 +343,9 @@ public partial class MainViewModel : ObservableObject
                 $"登录{(string.IsNullOrWhiteSpace(RegistryServer) ? "默认服务器" : RegistryServer)}。密码只经 stdin 传入，不保存。"))
             return;
 
-        var password = PromptPassword?.Invoke();
+        // 回调为 null 视为「UI 层没准备好」，与「用户取消」同等处理。
+        var prompt = PromptPassword;
+        var password = prompt is null ? null : await prompt();
         if (string.IsNullOrEmpty(password))
         {
             InfoMessage = "未输入密码，已取消登录。";
@@ -505,7 +511,7 @@ public partial class MainViewModel : ObservableObject
         if (SelectedContainer is null) return;
         var name = SelectedContainer.Name;
 
-        var path = PickSavePath($"wslcui-{name}.tar");
+        var path = await PickSavePathAsync($"wslcui-{name}.tar");
         if (string.IsNullOrEmpty(path)) return;
 
         var ct = BeginOp();
@@ -529,10 +535,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 弹出保存对话框并返回用户选中的路径；取消返回空串。
+    /// 弹出保存对话框并返回用户选中的路径；取消返回 null。
     /// 与 <c>PickContextDirectory</c> 同一套 OwnerHandle 父窗口处理。
     /// </summary>
-    private string? PickSavePath(string suggestedName)
+    /// <remarks>
+    /// 必须 async：Picker 的完成要 UI 线程 pumping，
+    /// <c>GetAwaiter().GetResult()</c> 在这里会死锁。
+    /// </remarks>
+    private async Task<string?> PickSavePathAsync(string suggestedName)
     {
         var picker = new Windows.Storage.Pickers.FileSavePicker
         {
@@ -543,7 +553,8 @@ public partial class MainViewModel : ObservableObject
         // 此时跳过 Initialize，picker 会以默认（无父窗口）方式弹出。
         if (OwnerHandle != IntPtr.Zero)
             InitializeWithWindow.Initialize(picker, OwnerHandle);
-        return picker.PickSaveFileAsync()?.GetAwaiter().GetResult()?.Path;
+        var file = await picker.PickSaveFileAsync();
+        return file?.Path;
     }
 
     // ---------------- 统计页实时采样（sparkline）----------------
@@ -873,31 +884,47 @@ public partial class MainViewModel : ObservableObject
 
     // ---------------- 过滤 + 排序 ----------------
 
-    /// <summary>重建可见集合。列表绑定 Filtered*，原始集合只作数据源。</summary>
+    /// <summary>
+    /// 重建可见集合。列表绑定 Filtered*，原始集合只作数据源。
+    /// 五个视图集合都走 <see cref="SyncInView{T}"/> 做差量、不换实例（原因见该方法注释）。
+    /// </summary>
     private void ApplyFilter()
     {
         var q = (SearchText ?? "").Trim();
         var desc = SortDescending;
 
-        FilteredContainers = new ObservableCollection<ContainerInfo>(
-            SortedColumn == "MountListCell"
-                ? OrderByInt(
-                    Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
-                    c => c.MountCount, desc)
-                : OrderBy(
-                    Containers.Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell)),
-                    SortedColumn switch
-                    {
-                        "Image" => c => c.Image,
-                        "Status" => c => c.StatusLabel,
-                        "Ports" => c => c.Ports,
-                        "Cpu" => c => c.Cpu,
-                        "CreatedAt" => c => c.CreatedAt,
-                        _ => c => c.Name,
-                    },
-                    numeric: SortedColumn == "Cpu", desc));
+        // 同步前记下选中项的业务键。镜像/网络/卷/stats 每轮刷新都是**新模型实例**，
+        // 同步后旧实例必然已不在视图里，选中状态需要靠这个键重新指回新实例；
+        // 指不到才清空（该行真消失了）。不依赖"ListView 在 Remove 时会不会把 TwoWay
+        // 的 SelectedX 回写成 null"这种版本相关行为 —— 回不回来都由这里兜住。
+        var keepImage = SelectedImage?.Reference;
+        var keepNetwork = SelectedNetwork?.Name;
+        var keepVolume = SelectedVolume?.Name;
+        var keepStat = SelectedStat?.Container;
 
-        FilteredImages = new ObservableCollection<ImageInfo>(OrderBy(
+        var visibleContainers = Containers
+            .Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell))
+            .ToList();
+        SyncInView(FilteredContainers, SortedColumn == "MountListCell"
+            ? OrderByInt(visibleContainers, c => c.MountCount, desc)
+            : OrderBy(visibleContainers, SortedColumn switch
+            {
+                "Image" => c => c.Image,
+                "Status" => c => c.StatusLabel,
+                "Ports" => c => c.Ports,
+                "Cpu" => c => c.Cpu,
+                "CreatedAt" => c => c.CreatedAt,
+                _ => c => c.Name,
+            }, numeric: SortedColumn == "Cpu", desc));
+        // 容器这一页**不按业务键恢复**：实例由 UpdateContainersInPlace 按名复用，
+        // 正常刷新时选中项一直在视图里，不需要动。反过来，选中项被移出视图
+        // （容器被外部删掉 / 被搜索条件排除）就必须显式清空 —— 留着它，停止/删除/
+        // 终端会继续打到不存在的容器上，比丢选中严重得多；而"ListView 在 Remove 时
+        // 必然把 TwoWay 的 SelectedItem 回写成 null"是不能依赖的版本相关行为。
+        if (SelectedContainer is not null && !FilteredContainers.Contains(SelectedContainer))
+            SelectedContainer = null;
+
+        var images = OrderBy(
             Images.Where(i => Matches(q, i.Repository, i.Tag, i.Size, i.Reference)),
             SortedColumn switch
             {
@@ -905,9 +932,14 @@ public partial class MainViewModel : ObservableObject
                 "Size" => i => i.Size,
                 _ => i => i.Repository,
             },
-            numeric: SortedColumn == "Size", desc));
+            numeric: SortedColumn == "Size", desc);
+        SyncInView(FilteredImages, images);
+        // 镜像每轮刷新都是新实例，选中项必然对不上视图里的新实例 → 按键重指；
+        // 重指不到才清空（镜像真被删了 / 被搜索条件排除）。
+        if (SelectedImage is null || !FilteredImages.Contains(SelectedImage))
+            SelectedImage = keepImage is null ? null : images.FirstOrDefault(i => i.Reference == keepImage);
 
-        FilteredNetworks = new ObservableCollection<NetworkInfo>(OrderBy(
+        var networks = OrderBy(
             Networks.Where(n => Matches(q, n.Name, n.Driver, n.Scope)),
             SortedColumn switch
             {
@@ -915,9 +947,12 @@ public partial class MainViewModel : ObservableObject
                 "Scope" => n => n.Scope,
                 _ => n => n.Name,
             },
-            numeric: false, desc));
+            numeric: false, desc);
+        SyncInView(FilteredNetworks, networks);
+        if (SelectedNetwork is null || !FilteredNetworks.Contains(SelectedNetwork))
+            SelectedNetwork = keepNetwork is null ? null : networks.FirstOrDefault(n => n.Name == keepNetwork);
 
-        FilteredVolumes = new ObservableCollection<VolumeInfo>(OrderBy(
+        var volumes = OrderBy(
             Volumes.Where(v => Matches(q, v.Name, v.Driver, v.Mountpoint)),
             SortedColumn switch
             {
@@ -925,9 +960,12 @@ public partial class MainViewModel : ObservableObject
                 "Mountpoint" => v => v.Mountpoint,
                 _ => v => v.Name,
             },
-            numeric: false, desc));
+            numeric: false, desc);
+        SyncInView(FilteredVolumes, volumes);
+        if (SelectedVolume is null || !FilteredVolumes.Contains(SelectedVolume))
+            SelectedVolume = keepVolume is null ? null : volumes.FirstOrDefault(v => v.Name == keepVolume);
 
-        FilteredStats = new ObservableCollection<StatInfo>(OrderBy(
+        var stats = OrderBy(
             Stats.Where(s => Matches(q, s.Container)),
             SortedColumn switch
             {
@@ -938,7 +976,10 @@ public partial class MainViewModel : ObservableObject
                 "Pids" => s => s.Pids,
                 _ => s => s.Container,
             },
-            numeric: SortedColumn is "Cpu" or "MemPercent" or "Pids", desc));
+            numeric: SortedColumn is "Cpu" or "MemPercent" or "Pids", desc);
+        SyncInView(FilteredStats, stats);
+        if (SelectedStat is null || !FilteredStats.Contains(SelectedStat))
+            SelectedStat = keepStat is null ? null : stats.FirstOrDefault(s => s.Container == keepStat);
 
         HasContainers = FilteredContainers.Count > 0;
         HasImages = FilteredImages.Count > 0;
@@ -954,6 +995,43 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(StatsCountText));
         OnPropertyChanged(nameof(ResourceSummaryText));
         OnPropertyChanged(nameof(StatusBarSummary));
+    }
+
+    /// <summary>
+    /// 把视图集合的内容差量同步成 <paramref name="desired"/>，<b>保持集合实例不变</b>。
+    ///
+    /// <para>
+    /// 不能直接给 <c>Filtered*</c> 赋一个新 <see cref="ObservableCollection{T}"/>：
+    /// ListView 的 ItemsSource 一换实例就清空选中，而 <c>SelectedItem</c> 是 TwoWay 绑定，
+    /// null 会回写进 ViewModel —— 详情面板空白、<c>LogTarget</c> 被清、inspect 的 CTS 取消，
+    /// 用户每次刷新都得重新点一遍行。容器页尤其致命：<c>UpdateContainersInPlace</c>
+    /// 专门按名复用实例来保住选中，换 ItemsSource 会把这套设计整个抵消掉。
+    /// </para>
+    ///
+    /// <para>
+    /// 这里只做差量：先倒序移除已消失项，再按目标顺序插入 / Move 到位。
+    /// 留下的行既不会被重建也不会被取消选中，滚动位置同样不动。
+    /// 按<b>引用</b>比较（这些模型都没重写 <c>Equals</c>）—— 模型实例换代时，
+    /// 调用方需自己按业务键恢复选中，见 <see cref="ApplyFilter"/>。
+    /// </para>
+    /// </summary>
+    internal static void SyncInView<T>(ObservableCollection<T> view, IReadOnlyList<T> desired)
+        where T : class
+    {
+        var wanted = new HashSet<T>(desired, ReferenceEqualityComparer.Instance);
+        for (var i = view.Count - 1; i >= 0; i--)
+            if (!wanted.Contains(view[i])) view.RemoveAt(i);
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            // 前 i 项已就位，只需从 i 往后找同一实例。
+            var at = -1;
+            for (var j = i; j < view.Count; j++)
+                if (ReferenceEquals(view[j], desired[i])) { at = j; break; }
+
+            if (at < 0) view.Insert(i, desired[i]);
+            else if (at != i) view.Move(at, i);
+        }
     }
 
     private static bool Matches(string query, params string?[] fields)

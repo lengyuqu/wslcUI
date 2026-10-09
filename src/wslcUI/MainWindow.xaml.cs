@@ -256,7 +256,7 @@ public sealed partial class MainWindow : Window
     /// 刻意用 ContentDialog 而非 PasswordBox 绑定：密码只在栈上存在，
     /// 不进任何绑定目标、不进 ViewModel 属性、不可能被 x:Bind 缓存。
     /// </summary>
-    private string? PromptPasswordDialog()
+    private async Task<string?> PromptPasswordDialog()
     {
         var box = new PasswordBox
         {
@@ -274,7 +274,8 @@ public sealed partial class MainWindow : Window
             DefaultButton = ContentDialogButton.Primary,
         };
 
-        var result = dialog.ShowAsync().GetAwaiter().GetResult();
+        // 必须 await：对话框的完成需要 UI 线程 pumping，同步等待会自锁整个窗口。
+        var result = await dialog.ShowAsync();
         return result == ContentDialogResult.Primary ? box.Password : null;
     }
 

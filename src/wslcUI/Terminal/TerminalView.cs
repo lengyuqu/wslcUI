@@ -172,7 +172,19 @@ public sealed class TerminalView : Panel
         TextWrapping = TextWrapping.NoWrap,
     };
 
-    private void OnBufferChanged(object? sender, XTerm.Events.TerminalEvents.BufferChangedEventArgs e) => _dirty = true;
+    /// <summary>
+    /// 缓冲区变化 → 置脏位并**主动请求一次布局**。
+    /// 只置脏位是不够的：<see cref="Render"/> 的调用点只有 <c>Loaded</c> 和
+    /// <see cref="MeasureOverride"/>，不触发布局就再没有第二次重绘，画面会停在
+    /// 开窗那一帧直到用户拖动窗口尺寸。布局系统会把同一渲染周期内的多次
+    /// InvalidateMeasure 合并成一次 measure，逐行 BufferChanged 不会放大开销。
+    /// 回调来自 <c>Terminal.Write</c>（UI 线程），与 Render 改动 Inlines 同一线程。
+    /// </summary>
+    private void OnBufferChanged(object? sender, XTerm.Events.TerminalEvents.BufferChangedEventArgs e)
+    {
+        _dirty = true;
+        InvalidateMeasure();
+    }
 
     // UI 线程上调用：把 cell 矩阵渲染到行池。
     public void Render()

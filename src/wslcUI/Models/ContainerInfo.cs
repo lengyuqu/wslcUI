@@ -102,6 +102,7 @@ public class ContainerInfo : INotifyPropertyChanged
             Raise(nameof(MountListCell));   // 派生属性依赖 _mounts，必须显式通知（OneWay 列表行卷列）
             Raise(nameof(MountsKvCell));
             Raise(nameof(MountSummary));
+            Raise(nameof(IsMountEmpty));    // 同上：派生自 _mounts.Count，不换实例就不会自己通知
         }
     }
 
@@ -122,7 +123,16 @@ public class ContainerInfo : INotifyPropertyChanged
     public bool MountsLoaded
     {
         get => _mountsLoaded;
-        set { if (_mountsLoaded == value) return; _mountsLoaded = value; Raise(); }
+        set
+        {
+            if (_mountsLoaded == value) return;
+            _mountsLoaded = value;
+            Raise();
+            // 详情面板绑的是下面两个派生态（MainWindow.xaml:1350/1355），
+            // 不显式通知就会停在「读取中…」，直到用户换选中项才被迫重算。
+            Raise(nameof(IsMountLoading));
+            Raise(nameof(IsMountEmpty));
+        }
     }
 
     /// <summary>已选中但 inspect 未返回（≤ 2 次 SP 间）——给 UI 显示"读取中…"。</summary>
