@@ -45,6 +45,13 @@ internal sealed class EventStreamService : IDisposable
     private CancellationTokenRegistration? _ctReg;
     private bool _disposed;
 
+    /// <summary>
+    /// true 表示当前这次 <see cref="Stop"/> 是**由取消令牌回调发起的**。
+    /// 那种情况下绝不能 <c>CancellationTokenRegistration.Dispose()</c> —— 它会等到
+    /// "正在执行的回调"结束，也就是等调用它自己，直接死锁（且常死在 UI 线程）。
+    /// </summary>
+    private bool _inCancelCallback;
+
     /// <summary>流是否正在运行（子进程活着且未 disposed）。</summary>
     public bool IsRunning
     {
@@ -114,7 +121,14 @@ internal sealed class EventStreamService : IDisposable
             _proc = proc;
             // 取消即停：与 WslcCli.RunAsync 的「取消即杀进程」安全网同构。
             _ctReg = ct.CanBeCanceled
-                ? ct.Register(static state => ((EventStreamService)state!).Stop(), this)
+                ? ct.Register(static state =>
+                {
+                    var s = (EventStreamService)state!;
+                    // 标记「正在令牌回调里」，让 Stop 跳过 reg.Dispose()（否则等自己 → 死锁）。
+                    s._inCancelCallback = true;
+                    try { s.Stop(); }
+                    finally { s._inCancelCallback = false; }
+                }, this)
                 : null;
         }
     }
@@ -134,37 +148,41 @@ internal sealed class EventStreamService : IDisposable
             _proc = null;
             _ctReg = null;
         }
-        if (reg is { } r)
-        {
-            // 若当前正处在该令牌的回调里（即取消触发 Stop），Dispose 会死等自己。
+        if (reg is { } r && !_inCancelCallback)
             r.Dispose();
-        }
         if (proc is null) return;
 
+        // 处理器必须**同步**摘干净：Stop 返回之后再不该有事件打到订阅方（ViewModel）上，
+        // 这也是"已停止"对调用方的语义承诺。摘完之后才允许收尾异步化。
         try
         {
-            // 先摘处理器：kill 会让进程退出并触发 OnExited/OnOutput，
-            // 不摘的话回调会打到已释放的状态上。
             proc.OutputDataReceived -= OnOutput;
             proc.ErrorDataReceived -= OnError;
             proc.Exited -= OnExited;
-
-            if (!proc.HasExited)
-            {
-                // entireProcessTree：wslc 可能派生子进程，只杀父进程会留孤儿。
-                proc.Kill(entireProcessTree: true);
-                // 有界等待回收；超时也不阻塞调用方（Dispose 里已经 best-effort）。
-                proc.WaitForExit(2000);
-            }
         }
         catch (InvalidOperationException)
         {
-            // 进程已退出/已释放：无需处理。
+            // 进程已释放：无需处理。
         }
-        finally
+
+        // 杀进程 + 回收放在线程池上：Stop 多数时候由 UI 线程调用（切页 / 关窗 / 点停止），
+        // 而 Kill(entireProcessTree) 之后 WaitForExit(2000) 最长能把窗口冻住两秒。
+        ThreadPool.QueueUserWorkItem(static state =>
         {
-            proc.Dispose();
-        }
+            var p = (Process)state!;
+            try
+            {
+                if (!p.HasExited)
+                {
+                    // entireProcessTree：wslc 可能派生子进程，只杀父进程会留孤儿。
+                    p.Kill(entireProcessTree: true);
+                    p.WaitForExit(2000);
+                }
+            }
+            catch (InvalidOperationException) { /* 已退出/已释放 */ }
+            catch (System.ComponentModel.Win32Exception) { /* 无权限或刚退出，尽力而为 */ }
+            finally { p.Dispose(); }
+        }, proc);
     }
 
     public void Dispose()
@@ -238,5 +256,12 @@ internal sealed class EventStreamService : IDisposable
         {
             Debug.WriteLine($"[wslcUI] 退出订阅方处理失败: {ex}");
         }
+
+        // 自然退出（wslc 自己死了 / 被外部杀掉）这条路径也必须回收 Process 对象：
+        // Stop() 看到 _proc 已被这里置 null 会直接返回，没人再 Dispose 它，
+        // 非托管句柄只能等终处理器。与并发 Stop 的收尾撞上了可能抛异常 ——
+        // 这是后台线程，绝不能让它逃出去（未处理异常 = 整个应用崩）。
+        try { proc?.Dispose(); }
+        catch (Exception ex) { Debug.WriteLine($"[wslcUI] Process 回收竞态: {ex.Message}"); }
     }
 }

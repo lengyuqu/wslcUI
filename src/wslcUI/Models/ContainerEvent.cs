@@ -28,7 +28,8 @@ namespace wslcUI.Models;
 /// <para>
 /// 因此把 9 位小数**拆成两半**存：前 7 位进 <see cref="Timestamp"/>（DateTimeOffset 能表达的上限），
 /// 余下 2 位（0~99）单独存进 <see cref="SubTickNanoseconds"/>，并由
-/// <see cref="SortKey"/> 把两者拼成一个**可比较的 long**，让排序成为全序。
+/// <see cref="SortKey"/> 把两者拼成一个**可比较的 decimal**，让排序成为全序
+/// （不能用 long：见 <see cref="SortKey"/> 的 remarks）。
 /// 实测 wslc 的时间戳目前实际都落在整秒（<c>.000000000</c>），但格式契约里写了纳秒，
 /// 不能赌它永远不出现亚 100ns 的值。
 /// </para>
@@ -78,7 +79,14 @@ public class ContainerEvent : IComparable<ContainerEvent>
     /// 再加上 <see cref="SubTickNanoseconds"/>。用 UTC 而非本地 ticks：不同事件行可能带
     /// 不同偏移（历史回读与实时流混合时尤其），本地 ticks 会让跨偏移的先后关系错掉。
     /// </summary>
-    public long SortKey => Timestamp.UtcTicks * 100 + SubTickNanoseconds;
+    /// <remarks>
+    /// 类型是 <see cref="decimal"/> 而<b>不是</b> <c>long</c>：现代时间戳的 UTC ticks 约
+    /// 6.4e17，乘 100 就是 6.4e19，**早就越过 long.MaxValue(9.2e18)** —— 用 long 会在
+    /// unchecked 下回绕成负数。回绕周期约 58 年，所以"同一批事件里相对顺序还对"，
+    /// 但这是个等着咬人的隐性错误（且 <c>ToString()</c> 会显示成天文数字负值）。
+    /// decimal 最大约 7.9e28，整数位精确无损。
+    /// </remarks>
+    public decimal SortKey => Timestamp.UtcTicks * 100m + SubTickNanoseconds;
 
     /// <summary>列表短 ID（<c>ObjectId</c> 前 12 位，docker 风格）。非十六进制或已够短时返回原值。</summary>
     public string ShortId =>

@@ -38,8 +38,11 @@
         </Grid>
 
         <!-- ============ 错误 / 提示（InfoBar） ============ -->
+        <!-- IsOpen 必须 TwoWay：InfoBar 自带的关闭按钮只改控件本地值，OneWay 下
+             ViewModel.IsInfoBarOpen 仍停在 true，于是 ShowError 再赋一次 true 不产生
+             通知 → 同一条错误第二次发生时提示栏根本不出现（错误被静默吞掉）。 -->
         <InfoBar Grid.Row="1" Margin="12,8,12,0" Title="提示" CornerRadius="6"
-                 IsOpen="{x:Bind ViewModel.IsInfoBarOpen, Mode=OneWay}"
+                 IsOpen="{x:Bind ViewModel.IsInfoBarOpen, Mode=TwoWay}"
                  Severity="{x:Bind ViewModel.InfoSeverity, Mode=OneWay}"
                  Message="{x:Bind ViewModel.InfoMessage, Mode=OneWay}">
             <InfoBar.ActionButton>
@@ -233,7 +236,9 @@
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0" Text="{x:Bind Name}" FontWeight="SemiBold"
                                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="0" Text="{x:Bind Image, Mode=OneWay}" TextTrimming="CharacterEllipsis"
+                                            <!-- 镜像在 col 1，与表头「镜像」按钮同列（曾误写成 col 0，
+                                                 于是与名称叠在同一格、镜像整列空白）。 -->
+                                            <TextBlock Grid.Column="1" Text="{x:Bind Image, Mode=OneWay}" TextTrimming="CharacterEllipsis"
                                                        VerticalAlignment="Center"
                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 

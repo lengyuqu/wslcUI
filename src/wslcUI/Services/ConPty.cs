@@ -110,6 +110,9 @@ internal sealed class PseudoConsole : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetExitCodeProcess(IntPtr h, out int code);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = (IntPtr)0x00020016;
 
@@ -321,20 +324,48 @@ internal sealed class PseudoConsole : IDisposable
         // the output pipe — that's what unblocks the reader thread's ReadFile.
         if (_hPC != IntPtr.Zero) { ClosePseudoConsole(_hPC); _hPC = IntPtr.Zero; }
         if (_hInWrite != IntPtr.Zero) { CloseHandle(_hInWrite); _hInWrite = IntPtr.Zero; }
+
+        // 关子进程交给后台线程：ClosePseudoConsole **不保证**带走 wslc.exe
+        // （attach 场景它仍附着在容器里），而等它退出再终止是"最多两秒"的阻塞动作，
+        // 绝不能压在 UI 线程的关窗路径上。hProcess 所有权随闭包移交，
+        // ReleaseHandles 不再关它（否则后台线程等到的是一个已失效句柄）。
+        var hProcess = _pi.hProcess;
+        _pi.hProcess = IntPtr.Zero;
+        if (hProcess != IntPtr.Zero)
+            ThreadPool.QueueUserWorkItem(static state =>
+            {
+                var h = (IntPtr)state!;
+                // WAIT_OBJECT_0 = 0：ClosePseudoConsole 之后通常立刻就退了。
+                if (WaitForSingleObject(h, 1500) != 0)
+                {
+                    try { TerminateProcess(h, 1); } catch { /* 已退出/权限，尽力而为 */ }
+                    WaitForSingleObject(h, 1000);
+                }
+                CloseHandle(h);
+            }, hProcess);
+
         // 先等读线程退出 ReadFile，再关 _hOutRead：关闭一个正被同步 ReadFile
         // 使用的句柄是未定义行为（可能读到复用句柄的数据甚至 AV）。
-        _reader?.Join(2000);
-        ReleaseHandles();
+        // Join 超时（管道 2 秒内没断）时**故意不关 _hOutRead** —— 泄漏一个内核对象
+        // 远好于制造一次未定义行为，读线程本身是后台线程、随进程退出收尾。
+        var readerDone = _reader is null || _reader.Join(2000);
+        ReleaseHandles(releaseOutRead: readerDone);
         _cts.Dispose();
     }
 
-    /// <summary>释放全部内核对象。Dispose（读线程已 join）与构造失败路径共用。</summary>
-    private void ReleaseHandles()
+    /// <summary>
+    /// 释放全部内核对象。Dispose（读线程已 join）与构造失败路径共用。
+    /// </summary>
+    /// <param name="releaseOutRead">
+    /// 读线程可能仍阻塞在 <c>ReadFile(_hOutRead)</c> 时为 false：此时关闭该句柄是 UB，
+    /// 宁可泄漏。构造失败路径没有线程在跑，用默认 true。
+    /// </param>
+    private void ReleaseHandles(bool releaseOutRead = true)
     {
         if (_hPC != IntPtr.Zero) { ClosePseudoConsole(_hPC); _hPC = IntPtr.Zero; }
         if (_hInRead != IntPtr.Zero) { CloseHandle(_hInRead); _hInRead = IntPtr.Zero; }
         if (_hInWrite != IntPtr.Zero) { CloseHandle(_hInWrite); _hInWrite = IntPtr.Zero; }
-        if (_hOutRead != IntPtr.Zero) { CloseHandle(_hOutRead); _hOutRead = IntPtr.Zero; }
+        if (releaseOutRead && _hOutRead != IntPtr.Zero) { CloseHandle(_hOutRead); _hOutRead = IntPtr.Zero; }
         if (_hOutWrite != IntPtr.Zero) { CloseHandle(_hOutWrite); _hOutWrite = IntPtr.Zero; }
         if (_pi.hProcess != IntPtr.Zero) { CloseHandle(_pi.hProcess); _pi.hProcess = IntPtr.Zero; }
         if (_pi.hThread != IntPtr.Zero) { CloseHandle(_pi.hThread); _pi.hThread = IntPtr.Zero; }

@@ -32,7 +32,7 @@ public enum ResourcePage
     Events,
 }
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IWslcClient _client;
     private readonly IDialogService? _dialogs;
@@ -221,6 +221,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        // 先解绑再绑定：意外退出路径（OnEventStreamExited）只把 IsEventStreamRunning
+        // 置 false、并不解绑，这里若直接 += 就给同一个事件挂了第二个处理器 ——
+        // 活动流每行重复出现，而且每重启一次再多泄漏一个订阅。
+        _eventStream.EventReceived -= OnEventReceived;
+        _eventStream.ErrorReceived -= OnEventStreamError;
+        _eventStream.Exited -= OnEventStreamExited;
         _eventStream.EventReceived += OnEventReceived;
         _eventStream.ErrorReceived += OnEventStreamError;
         _eventStream.Exited += OnEventStreamExited;
@@ -915,7 +921,7 @@ public partial class MainViewModel : ObservableObject
                 "Cpu" => c => c.Cpu,
                 "CreatedAt" => c => c.CreatedAt,
                 _ => c => c.Name,
-            }, numeric: SortedColumn == "Cpu", desc));
+            }, numeric: SortedColumn is "Cpu" or "CreatedAt", desc));
         // 容器这一页**不按业务键恢复**：实例由 UpdateContainersInPlace 按名复用，
         // 正常刷新时选中项一直在视图里，不需要动。反过来，选中项被移出视图
         // （容器被外部删掉 / 被搜索条件排除）就必须显式清空 —— 留着它，停止/删除/
@@ -976,7 +982,7 @@ public partial class MainViewModel : ObservableObject
                 "Pids" => s => s.Pids,
                 _ => s => s.Container,
             },
-            numeric: SortedColumn is "Cpu" or "MemPercent" or "Pids", desc);
+            numeric: SortedColumn is "Cpu" or "Mem" or "MemPercent" or "NetIo" or "Pids", desc);
         SyncInView(FilteredStats, stats);
         if (SelectedStat is null || !FilteredStats.Contains(SelectedStat))
             SelectedStat = keepStat is null ? null : stats.FirstOrDefault(s => s.Container == keepStat);
@@ -1050,8 +1056,14 @@ public partial class MainViewModel : ObservableObject
             var x = selector(a) ?? "";
             var y = selector(b) ?? "";
             var cmp = numeric
-                ? LeadingNumber(x).CompareTo(LeadingNumber(y))
+                // 单位感知折算："451MB" 与 "1.5GB"、"2 周前" 与 "3 个月前" 都必须按真实
+                // 量级比，只取前导数字会把两者都排反（见 NaturalSortKey 的类注释）。
+                ? NaturalSortKey.Rank(x).CompareTo(NaturalSortKey.Rank(y))
                 : string.Compare(x, y, CultureInfo.CurrentCulture, CompareOptions.IgnoreCase);
+            // List.Sort 不稳定：数值相等（例如两行的创建时间都解析不了、都落在
+            // Unrankable）时必须再按原文比一次，否则同值行的次序每刷一次换一个样。
+            if (cmp == 0 && numeric)
+                cmp = string.Compare(x, y, CultureInfo.CurrentCulture, CompareOptions.IgnoreCase);
             return cmp * factor;
         });
         return list;
@@ -1064,18 +1076,6 @@ public partial class MainViewModel : ObservableObject
         var factor = descending ? -1 : 1;
         list.Sort((a, b) => selector(a).CompareTo(selector(b)) * factor);
         return list;
-    }
-
-    /// <summary>取字符串开头的数值，用于 "12.3%" / "48.2 MB" 这类显示串的数值排序。</summary>
-    private static double LeadingNumber(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return 0;
-        var i = 0;
-        while (i < s.Length && !char.IsDigit(s[i]) && s[i] != '.') i++;
-        if (i >= s.Length) return 0;
-        var j = i;
-        while (j < s.Length && (char.IsDigit(s[j]) || s[j] == '.')) j++;
-        return double.TryParse(s[i..j], NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
     // ---------------- 导航 / 排序 / 面板命令 ----------------
@@ -2165,5 +2165,35 @@ public partial class MainViewModel : ObservableObject
         foreach (var (x, y) in points)
             collection.Add(new Windows.Foundation.Point(x, y));
         return collection;
+    }
+
+    /// <summary>
+    /// 关掉两条后台资源。<b>由 DI 容器调用</b>：MainWindow.Closed → App.Services.Dispose()
+    /// → 容器释放它创建的 MainViewModel 单例（这就是它实现 IDisposable 的全部理由）。
+    ///
+    /// <para>
+    /// 不能省：事件流是**永不自行退出**的长驻 <c>wslc events</c> 子进程，主窗口关了它
+    /// 还活着并占着管道；采样计时器每 3 秒起一个 <c>wslc stats</c>。二者都不该活过窗口。
+    /// </para>
+    /// </summary>
+    public void Dispose()
+    {
+        StopSampling();
+        // 计时器无需（也不能）Dispose：DispatcherQueueTimer 只有 Start/Stop，
+        // 随所属 DispatcherQueue 一起回收。
+        _sampler = null;
+        // 无条件调用：意外退出路径只把 IsEventStreamRunning 置 false、并未解绑，
+        // 这里要连订阅一起收掉（StopEventStream 本身幂等）。
+        StopEventStream();
+
+        _opCts?.Cancel();
+        _opCts?.Dispose();
+        _opCts = null;
+        _statsCts?.Cancel();
+        _statsCts?.Dispose();
+        _statsCts = null;
+        _inspectCts?.Cancel();
+        _inspectCts?.Dispose();
+        _inspectCts = null;
     }
 }

@@ -46,6 +46,14 @@ public sealed partial class TerminalWindow : Window
     // 等宽字符单元尺寸（一次测量缓存），用于 窗口px → 终端cols/rows 换算。
     private double _cellWidth, _cellHeight;
 
+    /// <summary>
+    /// PTY 输出的跨块 UTF-8 解码器。字节流按块到达（读缓冲 4 KB），一个 CJK 字符的
+    /// 3 个字节可能被切断在两块边界上，无状态的 <c>Encoding.UTF8.GetString</c> 会把
+    /// 残缺前缀解成 U+FFFD（中文日志/vim 一滚动就花屏）。必须在 UI 线程上使用，
+    /// 且每个终端窗口各自持有（有状态，共享会互相啃掉半截字符）。
+    /// </summary>
+    private readonly Utf8StreamDecoder _utf8 = new();
+
     // 关窗标记：PTY 读线程是后台线程，窗口关闭后输出回调仍可能到达。
     private volatile bool _closed;
 
@@ -100,7 +108,9 @@ public sealed partial class TerminalWindow : Window
                 {
                     // 窗口关闭后仍可能有已入队的输出回调：Terminal 已 Dispose。
                     if (_closed || terminal is null) return;
-                    try { terminal.Write(Encoding.UTF8.GetString(data)); }
+                    var text = _utf8.Decode(data);
+                    if (text.Length == 0) return;   // 整块都落在未完成的前缀里，不是失败
+                    try { terminal.Write(text); }
                     catch (ObjectDisposedException) { /* 关窗竞态，忽略 */ }
                 });
             };
@@ -120,7 +130,11 @@ public sealed partial class TerminalWindow : Window
                 : $"无法启动终端: {ex.Message} — 请确认容器 {container} 正在运行 (wslc start {container})。";
         }
 
-        if (_pty is not null)
+        // 判据是「Terminal 装配完成」而不是「PTY 建好了」：异常若发生在 _pty 创建之后
+        // （Terminal/View.Setup/事件订阅任一环节），用 _pty 判存活会刚把错误横幅显示出来
+        // 又收起，用户只拿到一个无提示的黑屏。catch 里已把 _terminal 置 null，
+        // 因此它非 null 等价于「整条启动链路都成功」。
+        if (_terminal is not null)
         {
             // PTY 正常：真键盘直打，行输入框收起（失败时保留为错误横幅）
             InputBox.Visibility = Visibility.Collapsed;

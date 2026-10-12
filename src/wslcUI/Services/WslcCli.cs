@@ -1016,11 +1016,14 @@ internal static class WslcCli
         var result = new List<ContainerMount>();
         if (string.IsNullOrWhiteSpace(output)) return result;
 
-        using var doc = System.Text.Json.JsonDocument.Parse(output);
-        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array)
-            return result;
+        // 裸 JsonException 从「选中容器」这条按需路径冒出来时，用户只看到一串天书；
+        // 包一层说清上下文。静默返回空列表更糟 —— 那等于把"读不到挂载"谎报成
+        // "这个容器没有挂载"。
+        using var doc = ParseJsonOrExplain(output, "wslc inspect");
 
-        foreach (var c in doc.RootElement.EnumerateArray())
+        // wslc 2.9.9.0 实测根是单元素数组；但 list/images/stats 都出现过"单对象"形态，
+        // 这里一并接受根对象，免得换个形态就静默返回空。
+        foreach (var c in EnumerateInspectRoots(doc.RootElement))
         {
             if (c.ValueKind != System.Text.Json.JsonValueKind.Object) continue;
             if (!c.TryGetProperty("Mounts", out var mounts) ||
@@ -1050,6 +1053,33 @@ internal static class WslcCli
             }
         }
         return result;
+    }
+
+    /// <summary>解析 JSON，失败时带上"哪条命令 + 原文开头"的上下文再抛。</summary>
+    private static System.Text.Json.JsonDocument ParseJsonOrExplain(string output, string command)
+    {
+        try
+        {
+            return System.Text.Json.JsonDocument.Parse(output);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            var head = output.Trim();
+            head = head.Length > 80 ? head[..80] : head;
+            throw new InvalidOperationException(
+                $"{command} 的输出不是有效 JSON（{ex.Message}）。原文开头：{head}", ex);
+        }
+    }
+
+    /// <summary>
+    /// inspect 根的形态兼容：数组逐元素、单对象算一个元素、其余（字符串/数字）为空。
+    /// </summary>
+    private static IEnumerable<System.Text.Json.JsonElement> EnumerateInspectRoots(
+        System.Text.Json.JsonElement root)
+    {
+        if (root.ValueKind == System.Text.Json.JsonValueKind.Array) return root.EnumerateArray();
+        if (root.ValueKind == System.Text.Json.JsonValueKind.Object) return new[] { root };
+        return Array.Empty<System.Text.Json.JsonElement>();
     }
 
     private static async Task<(int Exit, string Stdout, string Stderr)> RunAsync(
@@ -1099,6 +1129,12 @@ internal static class WslcCli
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
+        // stdin 走 --password-stdin 时也要显式 UTF-8，否则非 ASCII 密码/PAT 按控制台
+        // 默认输入码页（zh-CN = GBK）编码 → wslc 收到乱码、认证静默失败。
+        // 只能在确实重定向了 stdin 时设置：RedirectStandardInput=false 时赋值会让
+        // Process.Start 抛 InvalidOperationException。
+        if (stdin is not null)
+            psi.StandardInputEncoding = System.Text.Encoding.UTF8;
         // ArgumentList 逐参数传递，绕过 Arguments 字符串拼接的引号/空格
         // 解析：含空格或引号的容器名/网络名/卷名不会被拆成多个参数，
         // 也无法借引号给 wslc 注入额外参数。
@@ -1113,7 +1149,9 @@ internal static class WslcCli
         // no `--timeout` we can pass.
         using var _reg = ct.Register(() =>
         {
-            try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
+            // entireProcessTree：wslc 可能派生子进程，只杀父进程会留孤儿
+            // （与 EventStreamService.Stop 的结论保持一致）。
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
         });
 
         // 先把 stdin 写完并关闭，再排空输出流。
@@ -1164,7 +1202,9 @@ internal static class WslcCli
             ?? throw new InvalidOperationException("无法启动 wslc 进程。");
         using var _reg = ct.Register(() =>
         {
-            try { if (!proc.HasExited) proc.Kill(); } catch { /* best effort */ }
+            // entireProcessTree：wslc 可能派生子进程，只杀父进程会留孤儿
+            // （与 EventStreamService.Stop 的结论保持一致）。
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
         });
 
         proc.OutputDataReceived += (_, e) =>
@@ -1613,19 +1653,33 @@ internal static class WslcCli
         int? headerIdx = null;
         int[]? boundaries = null;
         string headerLine = "";
+        string? firstCandidate = null;
 
         for (int i = 0; i < lines.Length; i++)
         {
             var line = lines[i].TrimEnd('\r');
             if (line.Length == 0) continue;
             if (line.StartsWith("---", StringComparison.Ordinal)) continue;
-            boundaries = ComputeColumnBoundaries(line);
-            if (boundaries is null || boundaries.Length < 3) continue; // skip if it doesn't look like a header
+            var b = ComputeColumnBoundaries(line);
+            if (b is null || b.Length < 3) continue; // 列数不足，不像表头
+            firstCandidate ??= line;
+
+            // 只把「真的带本表必需列名」的那一行当表头。原来取的是第一条能切成 ≥3 列的
+            // 行 —— 那可能是 wslc 先打的警告/提示行，也可能是被缩进的表头（首格为空时
+            // ComputeColumnBoundaries 返回 null，于是真表头被跳过、拿数据行当表头），
+            // 结果就是退出码 0 + 空列表：UI 显示"0 容器"而不报任何错。
+            if (!HasContainerCaptions(b, line)) continue;
+            boundaries = b;
             headerLine = line;
             headerIdx = i;
             break;
         }
-        if (headerIdx is null || boundaries is null) return result;
+        if (headerIdx is null || boundaries is null)
+        {
+            TraceUnrecognisedTable("wslc list -a", firstCandidate,
+                "容器 ID/CONTAINER ID", "名称/NAME/NAMES", "映像/IMAGE");
+            return result;
+        }
 
         // Locate columns by caption (id / name / image / status).
         var idIdx = FindColumn(boundaries, headerLine, "容器 ID");
@@ -1681,7 +1735,11 @@ internal static class WslcCli
         var nameIdx = FindColumn(boundaries, headerLine, "NAME");
         var driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
         var scopeIdx = FindColumn(boundaries, headerLine, "SCOPE");
-        if (nameIdx < 0) return result;
+        if (nameIdx < 0)
+        {
+            TraceUnrecognisedTable("wslc network ls", headerLine, "NAME");
+            return result;
+        }
 
         var lines = output.Split('\n');
         for (int i = headerIdx + 1; i < lines.Length; i++)
@@ -1712,7 +1770,7 @@ internal static class WslcCli
 
         if (output.TrimStart().StartsWith('['))
         {
-            using var doc = System.Text.Json.JsonDocument.Parse(output);
+            using var doc = ParseJsonOrExplain(output, "wslc volume ls --format json");
             foreach (var el in doc.RootElement.EnumerateArray())
                 AddVolume(result, el);
             return result;
@@ -1722,8 +1780,14 @@ internal static class WslcCli
         {
             var t = line.Trim();
             if (t.Length == 0 || !t.StartsWith('{')) continue;
-            using var doc = System.Text.Json.JsonDocument.Parse(t);
-            AddVolume(result, doc.RootElement);
+            // 逐行**独立**解析（与 ParseStatsJson 同规则）：一个畸形行只该丢那一行，
+            // 不能让第 3 个卷的脏数据把整页卷列表清空 —— 那会被 UI 谎报成"没有卷"。
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(t);
+                AddVolume(result, doc.RootElement);
+            }
+            catch (System.Text.Json.JsonException) { /* 跳过坏行 */ }
         }
         return result;
     }
@@ -1864,7 +1928,11 @@ internal static class WslcCli
         var netIdx = Idx("网络 I/O"); if (netIdx < 0) netIdx = Idx("NET I/O");
         var blkIdx = Idx("块 I/O"); if (blkIdx < 0) blkIdx = Idx("BLOCK I/O");
         var pidsIdx = Idx("PIDS");
-        if (nameIdx < 0) return result;
+        if (nameIdx < 0)
+        {
+            TraceUnrecognisedTable("wslc stats -a", headerLine, "名称/NAME");
+            return result;
+        }
 
         var lines = output.Split('\n');
         for (int i = headerIdx + 1; i < lines.Length; i++)
@@ -1905,7 +1973,11 @@ internal static class WslcCli
         var tagIdx = FindColumn(boundaries, headerLine, "TAG");
         var idIdx = FindColumn(boundaries, headerLine, "IMAGE ID");
         var sizeIdx = FindColumn(boundaries, headerLine, "SIZE");
-        if (repoIdx < 0 || tagIdx < 0 || idIdx < 0) return result;
+        if (repoIdx < 0 || tagIdx < 0 || idIdx < 0)
+        {
+            TraceUnrecognisedTable("wslc images", headerLine, "REPOSITORY", "TAG", "IMAGE ID");
+            return result;
+        }
 
         var lines = output.Split('\n');
         for (int i = headerIdx + 1; i < lines.Length; i++)
@@ -1947,5 +2019,32 @@ internal static class WslcCli
             return (line, b, i);
         }
         return (null, Array.Empty<int>(), -1);
+    }
+
+    /// <summary>
+    /// 这一行是否带容器表必需的三个列名。按 caption 判断、不看位置 ——
+    /// 供表头搜索"跳过非表头的多列行"用。
+    /// </summary>
+    private static bool HasContainerCaptions(int[] boundaries, string line) =>
+        (FindColumn(boundaries, line, "容器 ID") >= 0 || FindColumn(boundaries, line, "CONTAINER ID") >= 0) &&
+        (FindColumn(boundaries, line, "名称") >= 0 || FindColumn(boundaries, line, "NAME") >= 0 ||
+         FindColumn(boundaries, line, "NAMES") >= 0) &&
+        (FindColumn(boundaries, line, "映像") >= 0 || FindColumn(boundaries, line, "IMAGE") >= 0);
+
+    /// <summary>
+    /// 表格解析放弃时的留痕。<b>刻意不改变行为</b>：仍然返回空列表 —— "认不出表头"
+    /// 不等于"命令失败"，抛出去会把整页刷新炸掉；但没有这行日志时，wslc 一旦改列名
+    /// 就只表现为"0 容器 / 0 镜像"，无从下手（这是本仓库记录过的历史 bug 类）。
+    /// 与 <c>TranslateCliError</c> 未命中码留痕同一个套路；Release 下由 Conditional
+    /// 整体移除，零开销。真机侧的正解仍是 tools/wslcUI.Verify 的 V2.1~V2.5。
+    /// </summary>
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void TraceUnrecognisedTable(
+        string command, string? firstCandidate, params string[] expectedCaptions)
+    {
+        System.Diagnostics.Debug.WriteLine(
+            $"[wslcUI] {command} 表头无法识别。首个多列候选行：「{firstCandidate ?? "(无)"}」，" +
+            $"需要其中含 {string.Join(" / ", expectedCaptions)}。" +
+            $"若 wslc 改了列名，请同步对应 Parse* 的 caption 表并补真机夹具。");
     }
 }

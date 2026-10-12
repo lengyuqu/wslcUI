@@ -43,7 +43,16 @@ internal static class EndpointParser
         foreach (var raw in portsText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var m = EndpointPattern.Match(raw);
-            if (!m.Success) continue;
+            if (!m.Success)
+            {
+                // 形如 `8000-8005->80/tcp`（端口区间）或 `9911/tcp`（只 EXPOSE、未发布到宿主）
+                // 的写法不产出端点行：前者语义（一段宿主口对一个容器口）在面板里无法诚实表达，
+                // 后者根本没有可访问的宿主地址 —— 都不该被伪造成一个端点。
+                // 但也不能悄无声息：留一行痕迹，日后"端口明明发了却没显示"才有得查。
+                System.Diagnostics.Debug.WriteLine(
+                    $"[wslcUI] 端口列片段无法识别，已跳过：「{raw}」（容器 {containerName}）");
+                continue;
+            }
 
             // 端口号用 int.TryParse 而非直接 int.Parse：越界值（32768+、超长数字）
             // 会让整页刷新抛 FormatException。端口列是展示数据，跳过坏项比崩掉好。

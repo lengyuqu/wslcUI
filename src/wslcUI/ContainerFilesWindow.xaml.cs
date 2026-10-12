@@ -61,7 +61,9 @@ public sealed partial class ContainerFilesWindow : Window
     /// <summary>本窗口范围内的确认对话框。</summary>
     private async Task<bool> ConfirmAsync(string title, string message)
     {
-        if (Content is not FrameworkElement fe || fe.XamlRoot is null) return true;
+        // 与 DialogService 同规则：拿不到 XamlRoot 就**不视为已确认**。这里守的是
+        // 容器内文件的删除（含递归目录），fail-open 等于跳过询问直接删。
+        if (Content is not FrameworkElement fe || fe.XamlRoot is null) return false;
         var dialog = new ContentDialog
         {
             XamlRoot = fe.XamlRoot,
