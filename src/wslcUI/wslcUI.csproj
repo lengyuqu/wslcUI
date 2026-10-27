@@ -7,6 +7,14 @@
     <WindowsSdkPackageVersion>10.0.26100.87</WindowsSdkPackageVersion>
     <RootNamespace>wslcUI</RootNamespace>
     <AssemblyName>wslcUI</AssemblyName>
+
+    <!-- 版本号。发版时与 git tag 对齐：tag vX.Y.Z ↔ <Version>X.Y.Z</Version>。
+         不设此属性时 SDK 会给 1.0.0.0 —— 代码升级了但程序集版本不动，
+         二进制之间没有任何版本差异（v1.0.0 之后攒了 14 个 commit 才补上）。
+         FileVersion / ProductVersion / InformationalVersion 由 SDK 从 Version 推导，
+         ProductVersion 还会自动追加 SourceRevisionId（commit hash）便于溯源。 -->
+    <Version>1.2.0</Version>
+
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;arm64</Platforms>
     <Nullable>enable</Nullable>

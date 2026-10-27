@@ -84,6 +84,25 @@ Windows 原生 UI 的 **WSL 容器（wslc）图形管理器**。本质 = 给 `ws
 - 这两个工具都只依赖 `dotnet`，不需要开 VS——**改完 `WslcCli` 的解析器务必补跑 verify**，
   它是唯一能验证真实 wslc 输出列格式的关卡（单测夹具是人抓的快照，会随 wslc 版本过期）。
 
+### 版本号（1.2.0 起）
+
+**唯一来源是 `src/wslcUI/wslcUI.csproj` 的 `<Version>`**，SDK 从它推导
+`AssemblyVersion` / `FileVersion` / `ProductVersion` / `InformationalVersion`
+（`ProductVersion` 还会自动追加 `SourceRevisionId`，即编译时的 commit hash）。
+
+发版时必须两处对齐：
+
+| 位置 | 值 |
+|---|---|
+| git tag | `vX.Y.Z` |
+| `wslcUI.csproj` | `<Version>X.Y.Z</Version>` |
+
+且 **tag 指向的 commit 必须就是产生该二进制的 commit**（否则「tag 源码 = 二进制来源」不成立）。
+
+⚠️ 1.2.0 之前 csproj 没有 `<Version>`，SDK 给的是默认 `1.0.0.0` ——
+v1.0.0 之后攒了 14 个 commit 的所有二进制，`FileVersion` 全是 `1.0.0.0`，
+**无法从版本号区分**。别再把版本号靠 tag 单独表达了。
+
 ## 4. 架构速览
 
 四层（详见 `docs/ARCHITECTURE.md`）：
