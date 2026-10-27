@@ -29,12 +29,12 @@
             <TextBlock Grid.Column="0" Text="统计" FontSize="15" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <TextBox Grid.Column="1" PlaceholderText="搜索容器…" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.StatsPage.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <TextBlock Grid.Column="2" Text="快照是一次性读数；「开始采样」每 3 秒轮询一次并画曲线。"
                        FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             <Button Grid.Column="3" Content="刷新快照" Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.RefreshStatsCommand}" />
+                    Command="{x:Bind ViewModel.StatsPage.RefreshSnapshotCommand}" />
             <Button Grid.Column="4" Content="开始采样"
                     Command="{x:Bind ViewModel.Sampling.ToggleSamplingCommand}"
                     Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Sampling.IsSampling), Mode=OneWay}" />
@@ -96,24 +96,24 @@
                 <ColumnDefinition Width="70" />
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Content="容器" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Container" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="Container" />
             <Button Grid.Column="1" Content="CPU%" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Cpu" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="Cpu" />
             <Button Grid.Column="2" Content="内存 / 限制" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Mem" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="Mem" />
             <Button Grid.Column="3" Content="内存%" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="MemPercent" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="MemPercent" />
             <Button Grid.Column="4" Content="网络 I/O" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="NetIo" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="NetIo" />
             <Button Grid.Column="5" Content="块 I/O" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="BlockIo" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="BlockIo" />
             <Button Grid.Column="6" Content="PID" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Pids" />
+                    Command="{x:Bind ViewModel.StatsPage.SortByCommand}" CommandParameter="Pids" />
         </Grid>
 
         <ListView Grid.Row="3" Margin="12,0"
-                  ItemsSource="{x:Bind ViewModel.FilteredStats, Mode=OneWay}"
-                  SelectedItem="{x:Bind ViewModel.SelectedStat, Mode=TwoWay}"
+                  ItemsSource="{x:Bind ViewModel.StatsPage.Items, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.StatsPage.SelectedItem, Mode=TwoWay}"
                   SelectionMode="Single" Padding="0">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -156,7 +156,7 @@
         </ListView>
 
         <StackPanel Grid.Row="3" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasStats), Mode=OneWay}">
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.StatsPage.HasItems), Mode=OneWay}">
             <TextBlock Text="暂无资源统计" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <TextBlock Text="点击「刷新快照」采集一次当前用量。wslc 仅统计运行中的容器。"
@@ -165,7 +165,7 @@
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             <Button Content="刷新快照" HorizontalAlignment="Center"
                     Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.RefreshStatsCommand}" />
+                    Command="{x:Bind ViewModel.StatsPage.RefreshSnapshotCommand}" />
         </StackPanel>
     </Grid>
 </UserControl>

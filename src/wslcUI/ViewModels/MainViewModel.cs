@@ -80,7 +80,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     public partial ObservableCollection<StatInfo> Stats { get; set; } = new();
 
     [ObservableProperty] public partial ContainerInfo? SelectedContainer { get; set; }
-    [ObservableProperty] public partial StatInfo? SelectedStat { get; set; }
 
     [ObservableProperty] public partial string Logs { get; set; } = "";
 
@@ -115,6 +114,11 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// 镜像页的页面级 ViewModel：列表 / 拉取 / 删除 + 出向闭环（登录、打标签、推送）。
     /// </summary>
     public ImagesViewModel ImagesPage { get; }
+
+    /// <summary>
+    /// 统计页的列表部分（资源快照表格）。采样与曲线在 <see cref="Sampling"/>。
+    /// </summary>
+    public StatsViewModel StatsPage { get; }
 
     /// <summary>
     /// 密码输入回调（PasswordBox 无法双向绑定，只能由 UI 层弹 ContentDialog 取值）。
@@ -270,11 +274,9 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     // --- 派生状态：列表是否有数据（空状态用）。基于过滤后的集合。---
     [ObservableProperty] public partial bool HasContainers { get; set; }
-    [ObservableProperty] public partial bool HasStats { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
     [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
-    [ObservableProperty] public partial bool HasSelectedStat { get; set; }
 
     // --- 派生状态：按钮是否可点（选中 / 输入 / 空闲 的组合）---
     [ObservableProperty] public partial bool CanActOnContainer { get; set; }
@@ -322,7 +324,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     [ObservableProperty] public partial string SortSummary { get; set; } = "默认";
 
     [ObservableProperty] public partial ObservableCollection<ContainerInfo> FilteredContainers { get; set; } = new();
-    [ObservableProperty] public partial ObservableCollection<StatInfo> FilteredStats { get; set; } = new();
 
     /// <summary>指标卡与状态栏用的计数文本。用 string 而非 int，避免 x:Bind 的类型转换坑。</summary>
     // 5 个 summary 字符串：get-only，每次拉 binding 时按 5 个集合实时计算。
@@ -442,7 +443,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         ResourcePage.Images => ImagesPage.SelectedItem is not null,
         ResourcePage.Networks => NetworkPage.SelectedItem is not null,
         ResourcePage.Volumes => VolumePage.SelectedItem is not null,
-        ResourcePage.Stats => HasSelectedStat,
+        ResourcePage.Stats => StatsPage.SelectedItem is not null,
         _ => false,
     };
 
@@ -524,6 +525,11 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
             InfoSeverity = e.Severity;
             IsInfoBarOpen = true;
         };
+
+        // 统计页列表子 VM：只吃 IResourceAccess，刷新入口由壳实现（快照后要回填容器）。
+        StatsPage = new StatsViewModel(this);
+        StatsPage.StatusRequested += (_, text) => Status = text;
+        StatsPage.ErrorRaised += (_, ex) => ShowError(ex);
 
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
@@ -639,13 +645,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     }
 
 
-    partial void OnSelectedStatChanged(StatInfo? value)
-    {
-        HasSelectedStat = value is not null;
-        LogTarget = value?.Container ?? "";
-        RecomputeCanStates();
-        RebuildSparklineTarget();
-    }
 
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
     partial void OnImagesChanged(ObservableCollection<ImageInfo> value) => ApplyFilter();
@@ -702,6 +701,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         NetworkPage.SearchText = "";
         VolumePage.SearchText = "";
         ImagesPage.SearchText = "";
+        StatsPage.SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
 
         // 切到卷页时重算反向表（用户可能新点过容器）。
@@ -749,7 +749,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 同步后旧实例必然已不在视图里，选中状态需要靠这个键重新指回新实例；
         // 指不到才清空（该行真消失了）。不依赖"ListView 在 Remove 时会不会把 TwoWay
         // 的 SelectedX 回写成 null"这种版本相关行为 —— 回不回来都由这里兜住。
-        var keepStat = SelectedStat?.Container;
 
         var visibleContainers = Containers
             .Where(c => Matches(q, c.Name, c.Image, c.StatusLabel, c.Ports, c.MountListCell))
@@ -773,24 +772,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         if (SelectedContainer is not null && !FilteredContainers.Contains(SelectedContainer))
             SelectedContainer = null;
 
-        var stats = OrderBy(
-            Stats.Where(s => Matches(q, s.Container)),
-            SortedColumn switch
-            {
-                "Cpu" => s => s.Cpu,
-                "Mem" => s => s.Mem,
-                "MemPercent" => s => s.MemPercent,
-                "NetIo" => s => s.NetIo,
-                "Pids" => s => s.Pids,
-                _ => s => s.Container,
-            },
-            numeric: SortedColumn is "Cpu" or "Mem" or "MemPercent" or "NetIo" or "Pids", desc);
-        SyncInView(FilteredStats, stats);
-        if (SelectedStat is null || !FilteredStats.Contains(SelectedStat))
-            SelectedStat = keepStat is null ? null : stats.FirstOrDefault(s => s.Container == keepStat);
-
         HasContainers = FilteredContainers.Count > 0;
-        HasStats = FilteredStats.Count > 0;
 
         // 5 个 summary 字符串已改为 get-only，XAML 拉 binding 时按 5 个集合实时算。
         // 显式 PropertyChanged 通知（防 XAML 把集合 setter 通知合并掉），
@@ -1071,7 +1053,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// 的选中项（与拆分前的取值顺序一致）。目标没变时子 VM 会自己跳过重画。
     /// </summary>
     private void RebuildSparklineTarget() =>
-        Sampling.SetTarget(SelectedStat?.Container is { Length: > 0 } stat
+        Sampling.SetTarget(StatsPage.SelectedItem?.Container is { Length: > 0 } stat
             ? stat
             : SelectedContainer?.Name);
 
@@ -1280,8 +1262,12 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         }
     }
 
-    [RelayCommand]
-    private async Task RefreshStatsAsync()
+    /// <summary>
+    /// 重新拉一次资源快照（<c>wslc stats</c>）。<see cref="IResourceAccess"/> 的实现：
+    /// 快照换掉后这里还要回填容器数值、重算概览页 CPU 合计，
+    /// 所以刷新入口留在壳、由统计页子 VM 调用。
+    /// </summary>
+    public async Task RefreshStatsAsync()
     {
         // 独立取消链：只取消上一次 stats 快照，不动主刷新。
         _statsCts?.Cancel();

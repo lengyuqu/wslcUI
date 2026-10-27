@@ -447,10 +447,10 @@
                 <!-- 统计详情 -->
                 <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsStatsPage), Mode=OneWay}">
                     <StackPanel Padding="16,14" Spacing="10"
-                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedStat), Mode=OneWay}">
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.StatsPage.HasSelected), Mode=OneWay}">
                         <TextBlock Text="资源快照 · 详情" FontSize="11.5"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.SelectedStat.Container, Mode=OneWay}"
+                        <TextBlock Text="{x:Bind ViewModel.StatsPage.SelectedItem.Container, Mode=OneWay}"
                                    FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
 
                         <!-- 实时曲线：CPU 与内存各自独立成图。刻意不叠在一张图里 ——
@@ -496,7 +496,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="CPU" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
-                                           Text="{x:Bind ViewModel.SelectedStat.Cpu, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.Cpu, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -505,7 +505,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="内存 / 限制" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           Text="{x:Bind ViewModel.SelectedStat.Mem, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.Mem, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -514,7 +514,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="内存百分比" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
-                                           Text="{x:Bind ViewModel.SelectedStat.MemPercent, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.MemPercent, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -523,7 +523,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="网络 I/O" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           Text="{x:Bind ViewModel.SelectedStat.NetIo, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.NetIo, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -532,7 +532,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="块 I/O" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           Text="{x:Bind ViewModel.SelectedStat.BlockIo, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.BlockIo, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -541,7 +541,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="PID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
-                                           Text="{x:Bind ViewModel.SelectedStat.Pids, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.StatsPage.SelectedItem.Pids, Mode=OneWay}" />
                             </Grid>
                         </StackPanel>
                         <Button Content="去容器页看该容器" HorizontalAlignment="Stretch" Margin="0,12,0,0"

@@ -36,4 +36,15 @@ public interface IResourceAccess
 
     /// <summary>只刷卷列表。</summary>
     Task RefreshVolumesAsync();
+
+    /// <summary>
+    /// 重新拉一次资源快照（<c>wslc stats</c>）。
+    ///
+    /// <para>
+    /// 放在这里而不是让子 VM 自己拉：快照换掉之后壳还要做两件联动 ——
+    /// 把数值回填进容器（<c>MergeStatsIntoContainers</c>）与概览页的 CPU 合计重算。
+    /// 子 VM 只需要「拿到最新快照」这个结果。
+    /// </para>
+    /// </summary>
+    Task RefreshStatsAsync();
 }
