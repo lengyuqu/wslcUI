@@ -29,13 +29,13 @@ public sealed partial class EndpointsView : UserControl
     private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is EndpointInfo ep)
-            ViewModel.CopyEndpointAddressCommand.Execute(ep);
+            ViewModel.Ports.CopyEndpointAddressCommand.Execute(ep);
     }
 
     /// <summary>行内「打开」：用默认浏览器访问该地址（unpackaged 下走 Shell 而非 Launcher）。</summary>
     private void OpenEndpoint_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is EndpointInfo ep)
-            ViewModel.OpenEndpointCommand.Execute(ep);
+            ViewModel.Ports.OpenEndpointCommand.Execute(ep);
     }
 }

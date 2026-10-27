@@ -28,20 +28,20 @@
             <TextBlock Grid.Column="0" Text="构建" FontSize="15" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <TextBox Grid.Column="1" PlaceholderText="构建上下文目录 (含 Dockerfile)" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.BuildContext, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-            <Button Grid.Column="2" Content="浏览" Command="{x:Bind ViewModel.PickBuildContextCommand}" />
+                     Text="{x:Bind ViewModel.Build.BuildContext, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <Button Grid.Column="2" Content="浏览" Command="{x:Bind ViewModel.Build.PickBuildContextCommand}" />
             <TextBox Grid.Column="3" PlaceholderText="标签 (如 myimage:latest)" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.BuildTag, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.Build.BuildTag, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="5" Content="开始构建" Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.BuildImageCommand}"
-                    IsEnabled="{x:Bind ViewModel.CanBuild, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.Build.BuildImageCommand}"
+                    IsEnabled="{x:Bind ViewModel.Build.CanBuild, Mode=OneWay}" />
         </Grid>
 
         <Border Grid.Row="1" Margin="12,8" CornerRadius="6"
                 Background="{ThemeResource LogPaneBg}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
             <ScrollViewer Padding="12">
-                <TextBlock Text="{x:Bind ViewModel.BuildOutput, Mode=OneWay}"
+                <TextBlock Text="{x:Bind ViewModel.Build.BuildOutput, Mode=OneWay}"
                            FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
                            IsTextSelectionEnabled="True" />
             </ScrollViewer>
@@ -50,6 +50,6 @@
                    HorizontalAlignment="Center" VerticalAlignment="Center"
                    TextWrapping="Wrap" MaxWidth="420" TextAlignment="Center"
                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasBuildOutput), Mode=OneWay}" />
+                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Build.HasBuildOutput), Mode=OneWay}" />
     </Grid>
 </UserControl>

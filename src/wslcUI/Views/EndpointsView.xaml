@@ -43,18 +43,18 @@
             </Border>
             <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" MinWidth="96">
                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
-                           FontSize="12.5" Text="{x:Bind ViewModel.EndpointCountText, Mode=OneWay}" />
+                           FontSize="12.5" Text="{x:Bind ViewModel.Ports.CountText, Mode=OneWay}" />
             </Border>
         </Grid>
 
         <StackPanel Grid.Row="2" Padding="12,0,12,4">
-            <InfoBar IsOpen="{x:Bind ViewModel.HasNonLoopbackEndpoint, Mode=OneWay}"
+            <InfoBar IsOpen="{x:Bind ViewModel.Ports.HasNonLoopback, Mode=OneWay}"
                      Severity="Warning" IsClosable="False"
-                     Title="{x:Bind ViewModel.NonLoopbackHint, Mode=OneWay}" />
+                     Title="{x:Bind ViewModel.Ports.NonLoopbackHint, Mode=OneWay}" />
         </StackPanel>
 
         <Grid Grid.Row="3">
-            <ListView ItemsSource="{x:Bind ViewModel.Endpoints, Mode=OneWay}"
+            <ListView ItemsSource="{x:Bind ViewModel.Ports.Items, Mode=OneWay}"
                       SelectionMode="None" Padding="0">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
@@ -93,7 +93,7 @@
             <TextBlock Text="还没有已发布的端口。用 -p 宿主端口:容器端口 启动容器后会出现在这里。"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasEndpoints), Mode=OneWay}" />
+                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Ports.HasItems), Mode=OneWay}" />
         </Grid>
     </Grid>
 </UserControl>

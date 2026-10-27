@@ -89,9 +89,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string NewNetworkName { get; set; } = "";
     [ObservableProperty] public partial string NewVolumeName { get; set; } = "";
     [ObservableProperty] public partial string Logs { get; set; } = "";
-    [ObservableProperty] public partial string BuildContext { get; set; } = "";
-    [ObservableProperty] public partial string BuildTag { get; set; } = "myimage:latest";
-    [ObservableProperty] public partial string BuildOutput { get; set; } = "";
 
     // ---------------- 维护页（磁盘占用 + 一键清理）----------------
     // 四个卡片的文案（字符串而非数值：占用是格式化后的，计数带单位"个"）。
@@ -110,25 +107,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>清理按钮可用性（忙碌时统一禁用，避免并发 prune）。</summary>
     [ObservableProperty] public partial bool CanPrune { get; set; } = true;
 
-    // ---------------- 端点面板（已发布端口汇总）----------------
-    // 对标 Docker Desktop 的 Endpoints 面板：把**所有运行中容器**已发布到宿主
-    // 的端口聚成一张表，一键复制 / 打开浏览器。数据来自容器行的 Ports 字符串，
-    // 经 Services/EndpointParser.cs 纯函数解析（可单测），不额外调 CLI。
-
-    [ObservableProperty] public partial ObservableCollection<EndpointInfo> Endpoints { get; set; } = new();
-
-    [ObservableProperty] public partial bool HasEndpoints { get; set; }
-
-    /// <summary>端点总数文本（指标卡用）。</summary>
-    public string EndpointCountText => Endpoints.Count.ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>是否有绑定到非回环地址的端点（局域网可访问）——决定是否显示提醒。</summary>
-    public bool HasNonLoopbackEndpoint => Endpoints.Any(e => !e.IsLoopback);
-
-    /// <summary>非回环端点的提示文案，无则空串。</summary>
-    public string NonLoopbackHint => HasNonLoopbackEndpoint
-        ? "有端点绑定在 0.0.0.0，局域网内其他设备也能访问。"
-        : "";
+    // ---------------- 端点页（已拆为独立 VM）----------------
+    /// <summary>
+    /// 端点页的页面级 ViewModel：把所有运行中容器已发布的端口聚成一张表。
+    /// 它只吃一个容器只读快照（<c>() =&gt; Containers</c>），不需要知道容器可变状态。
+    /// </summary>
+    public EndpointsViewModel Ports { get; }
 
     // ---------------- 批量操作（Select 模式）----------------
     // 竞品（WSL Container Desktop）的 Select 模式：列表进入多选后批量启停/删除。
@@ -171,6 +155,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// </para>
     /// </summary>
     public ActivityViewModel Activity { get; }
+
+    /// <summary>
+    /// 构建页的页面级 ViewModel（<c>wslc build -t</c>）。
+    /// 构建与容器 / 镜像状态无关，只把忙碌联动、状态栏、错误、成功四件事上抛。
+    /// </summary>
+    public BuildViewModel Build { get; }
 
     // ---------------- 镜像仓库与出向操作（push / tag / 登录）----------------
     // 此前镜像页只能「进」（pull）不能「出」（push），闭环缺失。密码一律走
@@ -445,7 +435,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial bool HasNetworks { get; set; }
     [ObservableProperty] public partial bool HasVolumes { get; set; }
     [ObservableProperty] public partial bool HasStats { get; set; }
-    [ObservableProperty] public partial bool HasBuildOutput { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
     [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
@@ -462,7 +451,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial bool CanCreateNetwork { get; set; }
     [ObservableProperty] public partial bool CanCreateVolume { get; set; }
     [ObservableProperty] public partial bool CanPull { get; set; }
-    [ObservableProperty] public partial bool CanBuild { get; set; }
     // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
     [ObservableProperty] public partial bool CanAttachContainer { get; set; }
 
@@ -596,8 +584,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string LogTarget { get; set; } = "";
     [ObservableProperty] public partial ElementTheme Theme { get; set; } = ElementTheme.Default;
 
-    /// <summary>Owner window handle, set by MainWindow so the FolderPicker can parent.</summary>
-    public IntPtr OwnerHandle { get; set; }
+    private IntPtr _ownerHandle;
+
+    /// <summary>
+    /// Owner window handle, set by MainWindow so the FolderPicker can parent.
+    /// 转发给需要弹选择器的子 VM（构建页的目录选择）—— 它们各自持有窗口句柄
+    /// 副本，免得每次挑选目录都回头找壳要。
+    /// </summary>
+    public IntPtr OwnerHandle
+    {
+        get => _ownerHandle;
+        set
+        {
+            _ownerHandle = value;
+            Build.OwnerHandle = value;
+        }
+    }
 
     public bool IsSearching => !string.IsNullOrWhiteSpace(SearchText);
     public bool HasSelection => CurrentPage switch
@@ -625,6 +627,23 @@ public partial class MainViewModel : ObservableObject, IDisposable
         };
         Activity.StatusRequested += (_, text) => Status = text;
         Activity.ErrorRaised += (_, ex) => ShowError(ex);
+
+        // 构建页子 VM：忙碌联动全局进度条，其余三件事按壳的统一规则呈现。
+        Build = new BuildViewModel(client);
+        Build.BusyChanged += (_, busy) => IsBusy = busy;
+        Build.StatusRequested += (_, text) => Status = text;
+        Build.Succeeded += (_, _) => IsInfoBarOpen = false;
+        Build.ErrorRaised += (_, ex) => ShowError(ex);
+
+        // 端点页子 VM：只吃容器只读快照，两个回调由 MainWindow 后续注入（转发）。
+        Ports = new EndpointsViewModel(() => Containers);
+        Ports.StatusRequested += (_, text) => Status = text;
+        Ports.NotifyRequested += (_, e) =>
+        {
+            InfoMessage = e.Message;
+            InfoSeverity = e.Severity;
+            IsInfoBarOpen = true;
+        };
 
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
@@ -792,13 +811,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnNetworksChanged(ObservableCollection<NetworkInfo> value) => ApplyFilter();
     partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => ApplyFilter();
     partial void OnStatsChanged(ObservableCollection<StatInfo> value) => ApplyFilter();
-    partial void OnBuildOutputChanged(string value) => HasBuildOutput = !string.IsNullOrEmpty(value);
 
     partial void OnPullReferenceChanged(string value) => RecomputeCanStates();
     partial void OnNewNetworkNameChanged(string value) => RecomputeCanStates();
     partial void OnNewVolumeNameChanged(string value) => RecomputeCanStates();
-    partial void OnBuildContextChanged(string value) => RecomputeCanStates();
-    partial void OnBuildTagChanged(string value) => RecomputeCanStates();
 
     partial void OnSearchTextChanged(string value)
     {
@@ -840,7 +856,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (value == ResourcePage.Maintenance) UpdateMaintenanceSummary();
         // 端点面板同样依赖容器的 Ports 列：容器在别的页面被就地合并过时
         // 面板不会自动跟着重算，进页时按当前集合重算一次。
-        if (value == ResourcePage.Endpoints) RebuildEndpoints();
+        if (value == ResourcePage.Endpoints) Ports.Rebuild();
         // 进活动页开流、离开立刻关流：事件流是**永不退出**的长驻 wslc 进程，
         // 不关就会一直占着一个子进程 + 管道，与统计页的采样同理。
         if (value == ResourcePage.Events) Activity.Start();
@@ -884,7 +900,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         CanCreateNetwork = !IsBusy && !string.IsNullOrWhiteSpace(NewNetworkName);
         CanCreateVolume = !IsBusy && !string.IsNullOrWhiteSpace(NewVolumeName);
         CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
-        CanBuild = !IsBusy && !string.IsNullOrWhiteSpace(BuildContext) && !string.IsNullOrWhiteSpace(BuildTag);
         CanPrune = !IsBusy;
         OnPropertyChanged(nameof(HasSelection));
     }
@@ -1330,7 +1345,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             RebuildContainerView();
             UpdateMaintenanceSummary();
-            RebuildEndpoints();
+            Ports.Rebuild();
             UpdateBulkStates();
             // 概览页计数卡跟着集合走：RefreshAsync 是全量刷新，这里重算一次最省事。
             UpdateDashboardSummary();
@@ -1488,50 +1503,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
             await _client.DeleteImageAsync(reference, ct);
             SelectedImage = null;
             await RefreshAsync();
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task PickBuildContextAsync()
-    {
-        var picker = new FolderPicker();
-        picker.FileTypeFilter.Add("*");
-        // WinUI 3 unpackaged: the picker must be parented to our window.
-        if (OwnerHandle != IntPtr.Zero)
-            InitializeWithWindow.Initialize(picker, OwnerHandle);
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is not null)
-            BuildContext = folder.Path;
-    }
-
-    [RelayCommand]
-    private async Task BuildImageAsync()
-    {
-        var ctx = BuildContext.Trim();
-        var tag = BuildTag.Trim();
-        if (string.IsNullOrWhiteSpace(ctx) || string.IsNullOrWhiteSpace(tag)) return;
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"构建 {tag} …";
-        BuildOutput = "";
-        try
-        {
-            var progress = new Progress<string>(line =>
-            {
-                BuildOutput += line + "\n";
-                Status = $"构建 {tag}: {line}";
-            });
-            await _client.BuildImageAsync(ctx, tag, progress, ct);
-            Status = $"镜像 {tag} 构建完成";
-            IsInfoBarOpen = false;
         }
         catch (System.Exception ex)
         {
@@ -1841,34 +1812,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         NetworkVolumeCountText = $"{Networks.Count} / {Volumes.Count}";
     }
 
-    /// <summary>
-    /// 重建端点面板：遍历**运行中**容器，把 Ports 列解析成端点行。
-    /// 已停止容器的端口列本就是空，且它们的端口不再真正监听，排除掉更符合直觉。
-    /// 解析是纯函数（EndpointParser），脏端口列只会被跳过，不会中断刷新。
-    /// </summary>
-    private void RebuildEndpoints()
-    {
-        var list = new List<EndpointInfo>();
-        // 按容器名排序，端口再按宿主端口排 —— 否则 RefreshAsync 的集合顺序
-        // 变化会让面板行乱跳（同一批端点每次刷新位置不同）。
-        foreach (var c in Containers.Where(c => c.IsRunning)
-                                    .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
-        {
-            list.AddRange(EndpointParser.Parse(c.Ports, c.Name));
-        }
-
-        var sorted = list
-            .OrderBy(e => e.ContainerName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(e => e.HostPort)
-            .ToList();
-
-        Endpoints = new ObservableCollection<EndpointInfo>(sorted);
-        HasEndpoints = Endpoints.Count > 0;
-        OnPropertyChanged(nameof(EndpointCountText));
-        OnPropertyChanged(nameof(HasNonLoopbackEndpoint));
-        OnPropertyChanged(nameof(NonLoopbackHint));
-    }
-
     // ---------------- 批量操作（Select 模式）----------------
 
     /// <summary>进入/退出 Select 模式。退出时清空选择，避免下次进入残留上次的勾选。</summary>
@@ -1944,7 +1887,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
 
             await RefreshContainersAsync();
-            RebuildEndpoints();
+            Ports.Rebuild();
             UpdateBulkStates();
 
             Status = failed.Count == 0
@@ -2004,47 +1947,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// 端点动作的外部回调。ViewModel 不直接引用 WinRT 的 Clipboard / Launcher
-    /// —— 那会让它无法单测，也把平台依赖拉进纯逻辑层。由 MainWindow 注入。
+    /// 端点动作的外部回调。转发给 <see cref="Ports"/> —— 子 VM 不直接引用 WinRT 的
+    /// Clipboard / Launcher，那会让它无法单测，也把平台依赖拉进纯逻辑层。
+    /// 由 MainWindow 注入（保持原有的注入点不变）。
     /// </summary>
-    public Action<string>? CopyText { get; set; }
-
-    public Action<string>? OpenUrl { get; set; }
-
-    /// <summary>把选中端点的地址复制到剪贴板（端点行右键/按钮）。</summary>
-    [RelayCommand]
-    private void CopyEndpoint(EndpointInfo? endpoint)
+    public Action<string>? CopyText
     {
-        if (endpoint is null) return;
-        var target = endpoint.Url.Length > 0 ? endpoint.Url : endpoint.Summary;
-        CopyText?.Invoke(target);
-        Status = $"已复制 {target}";
+        get => Ports.CopyText;
+        set => Ports.CopyText = value;
     }
 
-    /// <summary>用系统默认浏览器打开端点。UDP 端点没有可打开的 URL，直接拒绝并说明。</summary>
-    [RelayCommand]
-    private void OpenEndpoint(EndpointInfo? endpoint)
+    public Action<string>? OpenUrl
     {
-        if (endpoint is null) return;
-        if (endpoint.Url.Length == 0)
-        {
-            InfoMessage = $"{endpoint.Summary} 是 UDP 端口，没有可打开的地址。";
-            InfoSeverity = InfoBarSeverity.Informational;
-            IsInfoBarOpen = true;
-            return;
-        }
-        OpenUrl?.Invoke(endpoint.Url);
-        Status = $"已在浏览器打开 {endpoint.Url}";
-    }
-
-    /// <summary>把宿主的 IP:端口 部分复制出来（不含协议，方便拼到别的工具里）。</summary>
-    [RelayCommand]
-    private void CopyEndpointAddress(EndpointInfo? endpoint)
-    {
-        if (endpoint is null) return;
-        var target = $"{endpoint.HostIp}:{endpoint.HostPort}";
-        CopyText?.Invoke(target);
-        Status = $"已复制 {target}";
+        get => Ports.OpenUrl;
+        set => Ports.OpenUrl = value;
     }
 
     /// <summary>容器单表刷新（prune 后用，不必拉全套）。</summary>
@@ -2053,7 +1969,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var c = await _client.ListContainersAsync(CurrentToken);
         UpdateContainersInPlace(c);
         RebuildContainerView();
-        RebuildEndpoints();
+        Ports.Rebuild();
         UpdateBulkStates();
     }
 
