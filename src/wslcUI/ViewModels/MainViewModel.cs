@@ -80,10 +80,8 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     public partial ObservableCollection<StatInfo> Stats { get; set; } = new();
 
     [ObservableProperty] public partial ContainerInfo? SelectedContainer { get; set; }
-    [ObservableProperty] public partial ImageInfo? SelectedImage { get; set; }
     [ObservableProperty] public partial StatInfo? SelectedStat { get; set; }
 
-    [ObservableProperty] public partial string PullReference { get; set; } = "alpine:latest";
     [ObservableProperty] public partial string Logs { get; set; } = "";
 
     // ---------------- 维护页（磁盘占用 + 一键清理）----------------
@@ -112,6 +110,21 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// 卷页的页面级 ViewModel：列表 / 搜索 / 排序 / 增删 + 反向挂载映射。
     /// </summary>
     public VolumesViewModel VolumePage { get; }
+
+    /// <summary>
+    /// 镜像页的页面级 ViewModel：列表 / 拉取 / 删除 + 出向闭环（登录、打标签、推送）。
+    /// </summary>
+    public ImagesViewModel ImagesPage { get; }
+
+    /// <summary>
+    /// 密码输入回调（PasswordBox 无法双向绑定，只能由 UI 层弹 ContentDialog 取值）。
+    /// 转发给镜像页 —— 登录仓库是唯一用到它的地方。
+    /// </summary>
+    public Func<Task<string?>>? PromptPassword
+    {
+        get => ImagesPage.PromptPassword;
+        set => ImagesPage.PromptPassword = value;
+    }
 
     // ---------------- 端点页（已拆为独立 VM）----------------
     /// <summary>
@@ -167,176 +180,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// </summary>
     public BuildViewModel Build { get; }
 
-    // ---------------- 镜像仓库与出向操作（push / tag / 登录）----------------
-    // 此前镜像页只能「进」（pull）不能「出」（push），闭环缺失。密码一律走
-    // IWslcClient.RegistryLoginAsync 的 --password-stdin 通道，**不存盘、不进日志**。
-
-    [ObservableProperty] public partial string RegistryServer { get; set; } = "";
-    [ObservableProperty] public partial string RegistryUser { get; set; } = "";
-    [ObservableProperty] public partial string TagTarget { get; set; } = "";
-
-    [ObservableProperty] public partial bool CanPushImage { get; set; }
-    [ObservableProperty] public partial bool CanTagImage { get; set; }
-
-    /// <summary>登录结果提示（不显示密码）。</summary>
-    [ObservableProperty] public partial string RegistryStatusText { get; set; } = "";
-
-    [ObservableProperty] public partial string PushOutput { get; set; } = "";
-    [ObservableProperty] public partial bool HasPushOutput { get; set; }
-
     [ObservableProperty] public partial string ContainerExportPath { get; set; } = "";
-
-    /// <summary>
-    /// 登录镜像仓库。密码通过回调交给 UI 层读取（PasswordBox 无法双向绑定），
-    /// 拿完即丢 —— 不进 ViewModel 状态、不写盘、不进日志。
-    /// </summary>
-    /// <remarks>
-    /// 回调必须是 <see cref="Task{TResult}"/>：UI 层的 ContentDialog 只能在 UI 线程
-    /// 上 await，同步形态（<c>GetAwaiter().GetResult()</c>）会当场死锁整个窗口。
-    /// </remarks>
-    public Func<Task<string?>>? PromptPassword { get; set; }
-
-    [RelayCommand]
-    private async Task RegistryLoginAsync()
-    {
-        if (_dialogs is not null && !await _dialogs.ConfirmAsync(
-                "登录镜像仓库",
-                $"将以用户「{(string.IsNullOrWhiteSpace(RegistryUser) ? "<空>" : RegistryUser)}」" +
-                $"登录{(string.IsNullOrWhiteSpace(RegistryServer) ? "默认服务器" : RegistryServer)}。密码只经 stdin 传入，不保存。"))
-            return;
-
-        // 回调为 null 视为「UI 层没准备好」，与「用户取消」同等处理。
-        var prompt = PromptPassword;
-        var password = prompt is null ? null : await prompt();
-        if (string.IsNullOrEmpty(password))
-        {
-            InfoMessage = "未输入密码，已取消登录。";
-            InfoSeverity = InfoBarSeverity.Informational;
-            IsInfoBarOpen = true;
-            return;
-        }
-
-        var ct = BeginOp();
-        IsBusy = true;
-        try
-        {
-            await _client.RegistryLoginAsync(
-                string.IsNullOrWhiteSpace(RegistryServer) ? null : RegistryServer.Trim(),
-                string.IsNullOrWhiteSpace(RegistryUser) ? null : RegistryUser.Trim(),
-                password, ct);
-            password = null; // 尽早脱离本方法的局部变量
-            RegistryStatusText = $"已登录 {RegistryServer}";
-            Status = "仓库登录成功";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RegistryLogoutAsync()
-    {
-        var ct = BeginOp();
-        IsBusy = true;
-        try
-        {
-            await _client.RegistryLogoutAsync(
-                string.IsNullOrWhiteSpace(RegistryServer) ? null : RegistryServer.Trim(), ct);
-            RegistryStatusText = "已注销";
-            Status = "仓库已注销";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task PushImageAsync()
-    {
-        if (SelectedImage is null) return;
-        var reference = SelectedImage.Reference;
-        if (string.IsNullOrWhiteSpace(reference))
-        {
-            InfoMessage = "该镜像没有可用的引用（reference 为空），无法推送。";
-            InfoSeverity = InfoBarSeverity.Warning;
-            IsInfoBarOpen = true;
-            return;
-        }
-
-        if (_dialogs is not null && !await _dialogs.ConfirmAsync(
-                "推送镜像", $"将 {reference} 推送到镜像仓库。未登录的仓库会失败。"))
-            return;
-
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"正在推送 {reference}…";
-        PushOutput = "";
-        HasPushOutput = true;
-        try
-        {
-            var progress = new Progress<string>(line =>
-                PushOutput = AppendLine(PushOutput, line));
-            await _client.PushImageAsync(reference, allTags: false, quiet: false, progress, ct);
-            Status = $"已推送 {reference}";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            PushOutput = AppendLine(PushOutput, $"失败：{ex.Message}");
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task TagImageAsync()
-    {
-        if (SelectedImage is null) return;
-        var target = TagTarget.Trim();
-        if (string.IsNullOrEmpty(target))
-        {
-            InfoMessage = "请先填写目标标签（如 registry.example.com/app:v1）。";
-            InfoSeverity = InfoBarSeverity.Informational;
-            IsInfoBarOpen = true;
-            return;
-        }
-
-        var ct = BeginOp();
-        IsBusy = true;
-        try
-        {
-            await _client.TagImageAsync(SelectedImage.Reference, target, ct);
-            await RefreshImagesAsync();
-            Status = $"已打标签 {target}";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private static string AppendLine(string text, string line) =>
-        string.IsNullOrEmpty(text) ? line : text + "\n" + line;
 
     [RelayCommand]
     private async Task KillContainerAsync()
@@ -426,18 +270,14 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     // --- 派生状态：列表是否有数据（空状态用）。基于过滤后的集合。---
     [ObservableProperty] public partial bool HasContainers { get; set; }
-    [ObservableProperty] public partial bool HasImages { get; set; }
     [ObservableProperty] public partial bool HasStats { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
     [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
-    [ObservableProperty] public partial bool HasSelectedImage { get; set; }
     [ObservableProperty] public partial bool HasSelectedStat { get; set; }
 
     // --- 派生状态：按钮是否可点（选中 / 输入 / 空闲 的组合）---
     [ObservableProperty] public partial bool CanActOnContainer { get; set; }
-    [ObservableProperty] public partial bool CanActOnImage { get; set; }
-    [ObservableProperty] public partial bool CanPull { get; set; }
     // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
     [ObservableProperty] public partial bool CanAttachContainer { get; set; }
 
@@ -482,7 +322,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     [ObservableProperty] public partial string SortSummary { get; set; } = "默认";
 
     [ObservableProperty] public partial ObservableCollection<ContainerInfo> FilteredContainers { get; set; } = new();
-    [ObservableProperty] public partial ObservableCollection<ImageInfo> FilteredImages { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<StatInfo> FilteredStats { get; set; } = new();
 
     /// <summary>指标卡与状态栏用的计数文本。用 string 而非 int，避免 x:Bind 的类型转换坑。</summary>
@@ -600,7 +439,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     public bool HasSelection => CurrentPage switch
     {
         ResourcePage.Containers => HasSelectedContainer,
-        ResourcePage.Images => HasSelectedImage,
+        ResourcePage.Images => ImagesPage.SelectedItem is not null,
         ResourcePage.Networks => NetworkPage.SelectedItem is not null,
         ResourcePage.Volumes => VolumePage.SelectedItem is not null,
         ResourcePage.Stats => HasSelectedStat,
@@ -673,6 +512,19 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         VolumePage.Succeeded += (_, _) => IsInfoBarOpen = false;
         VolumePage.ErrorRaised += (_, ex) => ShowError(ex);
 
+        // 镜像页子 VM：六条命令横跨「进」（pull）与「出」（tag / push / login / logout）。
+        ImagesPage = new ImagesViewModel(this, client, dialogs);
+        ImagesPage.BusyChanged += (_, busy) => IsBusy = busy;
+        ImagesPage.StatusRequested += (_, text) => Status = text;
+        ImagesPage.Succeeded += (_, _) => IsInfoBarOpen = false;
+        ImagesPage.ErrorRaised += (_, ex) => ShowError(ex);
+        ImagesPage.NotifyRequested += (_, e) =>
+        {
+            InfoMessage = e.Message;
+            InfoSeverity = e.Severity;
+            IsInfoBarOpen = true;
+        };
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -691,6 +543,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         Maintenance.SetGlobalBusy(value);
         NetworkPage.SetGlobalBusy(value);
         VolumePage.SetGlobalBusy(value);
+        ImagesPage.SetGlobalBusy(value);
     }
 
     partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
@@ -785,12 +638,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         }
     }
 
-    partial void OnSelectedImageChanged(ImageInfo? value)
-    {
-        HasSelectedImage = value is not null;
-        LogTarget = value is null ? "" : value.Reference;
-        RecomputeCanStates();
-    }
 
     partial void OnSelectedStatChanged(StatInfo? value)
     {
@@ -806,7 +653,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => VolumePage.Refresh();
     partial void OnStatsChanged(ObservableCollection<StatInfo> value) => ApplyFilter();
 
-    partial void OnPullReferenceChanged(string value) => RecomputeCanStates();
 
     partial void OnSearchTextChanged(string value)
     {
@@ -855,6 +701,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 网络页的搜索已下沉到子 VM，切页也要清，否则残留上一轮的过滤条件。
         NetworkPage.SearchText = "";
         VolumePage.SearchText = "";
+        ImagesPage.SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
 
         // 切到卷页时重算反向表（用户可能新点过容器）。
@@ -883,8 +730,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     {
         CanActOnContainer = HasSelectedContainer && !IsBusy;
         CanAttachContainer = HasSelectedContainer && !IsBusy && SelectedContainer is { IsRunning: true };
-        CanActOnImage = HasSelectedImage && !IsBusy;
-        CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
 
         OnPropertyChanged(nameof(HasSelection));
     }
@@ -904,7 +749,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 同步后旧实例必然已不在视图里，选中状态需要靠这个键重新指回新实例；
         // 指不到才清空（该行真消失了）。不依赖"ListView 在 Remove 时会不会把 TwoWay
         // 的 SelectedX 回写成 null"这种版本相关行为 —— 回不回来都由这里兜住。
-        var keepImage = SelectedImage?.Reference;
         var keepStat = SelectedStat?.Container;
 
         var visibleContainers = Containers
@@ -929,20 +773,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         if (SelectedContainer is not null && !FilteredContainers.Contains(SelectedContainer))
             SelectedContainer = null;
 
-        var images = OrderBy(
-            Images.Where(i => Matches(q, i.Repository, i.Tag, i.Size, i.Reference)),
-            SortedColumn switch
-            {
-                "Tag" => i => i.Tag,
-                "Size" => i => i.Size,
-                _ => i => i.Repository,
-            },
-            numeric: SortedColumn == "Size", desc);
-        SyncInView(FilteredImages, images);
-        // 镜像每轮刷新都是新实例，选中项必然对不上视图里的新实例 → 按键重指；
-        // 重指不到才清空（镜像真被删了 / 被搜索条件排除）。
-        if (SelectedImage is null || !FilteredImages.Contains(SelectedImage))
-            SelectedImage = keepImage is null ? null : images.FirstOrDefault(i => i.Reference == keepImage);
         var stats = OrderBy(
             Stats.Where(s => Matches(q, s.Container)),
             SortedColumn switch
@@ -960,7 +790,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
             SelectedStat = keepStat is null ? null : stats.FirstOrDefault(s => s.Container == keepStat);
 
         HasContainers = FilteredContainers.Count > 0;
-        HasImages = FilteredImages.Count > 0;
         HasStats = FilteredStats.Count > 0;
 
         // 5 个 summary 字符串已改为 get-only，XAML 拉 binding 时按 5 个集合实时算。
@@ -1396,31 +1225,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     }
 
     [RelayCommand]
-    private async Task PullAsync()
-    {
-        var reference = PullReference.Trim();
-        if (string.IsNullOrWhiteSpace(reference)) return;
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"拉取 {reference} …";
-        try
-        {
-            var progress = new Progress<(string Status, long Current, long Total)>(
-                p => Status = $"拉取 {p.Status} ({p.Current}/{p.Total})");
-            await _client.PullImageAsync(reference, progress, ct);
-            await RefreshAsync();
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
     private async Task DeleteContainerAsync()
     {
         if (SelectedContainer is null) return;
@@ -1447,35 +1251,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
             IsBusy = false;
         }
     }
-
-    [RelayCommand]
-    private async Task DeleteImageAsync()
-    {
-        if (SelectedImage is null) return;
-        var reference = SelectedImage.Reference;
-        if (_dialogs is not null &&
-            !await _dialogs.ConfirmAsync("删除镜像", $"确定删除镜像「{reference}」吗？此操作不可撤销。"))
-            return;
-
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"删除镜像 {reference} …";
-        try
-        {
-            await _client.DeleteImageAsync(reference, ct);
-            SelectedImage = null;
-            await RefreshAsync();
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
     [RelayCommand]
     private async Task ShowLogsAsync()
     {

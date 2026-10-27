@@ -268,10 +268,10 @@
                 <!-- 镜像详情 -->
                 <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsImagesPage), Mode=OneWay}">
                     <StackPanel Padding="16,14" Spacing="10"
-                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedImage), Mode=OneWay}">
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.ImagesPage.HasSelected), Mode=OneWay}">
                         <TextBlock Text="镜像 · 详情" FontSize="11.5"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.SelectedImage.Reference, Mode=OneWay}"
+                        <TextBlock Text="{x:Bind ViewModel.ImagesPage.SelectedItem.Reference, Mode=OneWay}"
                                    FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <StackPanel>
                             <Grid Style="{StaticResource KvRowStyle}">
@@ -281,7 +281,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="仓库" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{x:Bind ViewModel.SelectedImage.Repository, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.ImagesPage.SelectedItem.Repository, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -290,7 +290,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="标签" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{x:Bind ViewModel.SelectedImage.Tag, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.ImagesPage.SelectedItem.Tag, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -299,7 +299,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="大小" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
-                                           Text="{x:Bind ViewModel.SelectedImage.Size, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.ImagesPage.SelectedItem.Size, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -308,7 +308,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="摘要" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           Text="{x:Bind ViewModel.SelectedImage.DigestDisplay, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.ImagesPage.SelectedItem.DigestDisplay, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -317,12 +317,12 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="镜像 ID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
-                                           Text="{x:Bind ViewModel.SelectedImage.Id, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.ImagesPage.SelectedItem.Id, Mode=OneWay}" />
                             </Grid>
                         </StackPanel>
                         <Button Content="删除镜像" HorizontalAlignment="Stretch" Margin="0,12,0,0"
-                                Command="{x:Bind ViewModel.DeleteImageCommand}"
-                                IsEnabled="{x:Bind ViewModel.CanActOnImage, Mode=OneWay}"
+                                Command="{x:Bind ViewModel.ImagesPage.DeleteImageCommand}"
+                                IsEnabled="{x:Bind ViewModel.ImagesPage.CanAct, Mode=OneWay}"
                                 Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                     </StackPanel>
                     <StackPanel Padding="16,14" Spacing="8">

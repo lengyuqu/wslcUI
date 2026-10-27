@@ -30,16 +30,16 @@
             <TextBlock Grid.Column="0" Text="镜像" FontSize="15" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <TextBox Grid.Column="1" PlaceholderText="搜索仓库 / 标签…" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.ImagesPage.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <TextBox Grid.Column="2" PlaceholderText="镜像引用 (如 alpine:latest)" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.PullReference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.ImagesPage.PullReference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="3" Content="拉取" Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.PullCommand}"
-                    IsEnabled="{x:Bind ViewModel.CanPull, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.ImagesPage.PullCommand}"
+                    IsEnabled="{x:Bind ViewModel.ImagesPage.CanPull, Mode=OneWay}" />
             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <TextBlock FontSize="12" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}">
-                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.SortSummary, Mode=OneWay}" />
+                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.ImagesPage.SortSummary, Mode=OneWay}" />
                 </TextBlock>
                 <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
             </StackPanel>
@@ -60,31 +60,31 @@
             <TextBlock Grid.Column="0" Text="仓库" FontSize="12.5" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <TextBox Grid.Column="1" PlaceholderText="服务器（留空=默认）" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.RegistryServer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.ImagesPage.RegistryServer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <TextBox Grid.Column="2" PlaceholderText="用户名" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.RegistryUser, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.ImagesPage.RegistryUser, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="3" Content="登录" MinWidth="72"
-                    Command="{x:Bind ViewModel.RegistryLoginCommand}" />
+                    Command="{x:Bind ViewModel.ImagesPage.RegistryLoginCommand}" />
             <Button Grid.Column="4" Content="注销" MinWidth="72"
-                    Command="{x:Bind ViewModel.RegistryLogoutCommand}" />
+                    Command="{x:Bind ViewModel.ImagesPage.RegistryLogoutCommand}" />
             <TextBox Grid.Column="5" PlaceholderText="目标标签（如 reg.example.com/app:v1）" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.TagTarget, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.ImagesPage.TagTarget, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="6" Content="打标签" MinWidth="86"
-                    Command="{x:Bind ViewModel.TagImageCommand}"
-                    IsEnabled="{x:Bind ViewModel.HasSelectedImage, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.ImagesPage.TagImageCommand}"
+                    IsEnabled="{x:Bind ViewModel.ImagesPage.HasSelected, Mode=OneWay}" />
             <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <TextBlock FontSize="12" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="{x:Bind ViewModel.RegistryStatusText, Mode=OneWay}" />
+                           Text="{x:Bind ViewModel.ImagesPage.RegistryStatusText, Mode=OneWay}" />
                 <Button Content="推送选中镜像" Style="{StaticResource AccentButtonStyle}"
-                        Command="{x:Bind ViewModel.PushImageCommand}"
-                        IsEnabled="{x:Bind ViewModel.HasSelectedImage, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.ImagesPage.PushImageCommand}"
+                        IsEnabled="{x:Bind ViewModel.ImagesPage.HasSelected, Mode=OneWay}" />
             </StackPanel>
         </Grid>
 
         <StackPanel Grid.Row="2" Padding="12,0,12,4"
-                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasPushOutput), Mode=OneWay}">
-            <TextBlock Text="{x:Bind ViewModel.PushOutput, Mode=OneWay}"
+                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.ImagesPage.HasPushOutput), Mode=OneWay}">
+            <TextBlock Text="{x:Bind ViewModel.ImagesPage.PushOutput, Mode=OneWay}"
                        FontSize="11.5" FontFamily="Consolas" TextWrapping="Wrap"
                        MaxHeight="72" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </StackPanel>
@@ -98,19 +98,19 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Content="仓库" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Repository" />
+                    Command="{x:Bind ViewModel.ImagesPage.SortByCommand}" CommandParameter="Repository" />
             <Button Grid.Column="1" Content="标签" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Tag" />
+                    Command="{x:Bind ViewModel.ImagesPage.SortByCommand}" CommandParameter="Tag" />
             <Button Grid.Column="2" Content="大小" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Size" />
+                    Command="{x:Bind ViewModel.ImagesPage.SortByCommand}" CommandParameter="Size" />
             <TextBlock Grid.Column="3" Text="摘要" FontSize="12" FontWeight="SemiBold"
                        VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </Grid>
 
         <ListView Grid.Row="2" Margin="12,0"
-                  ItemsSource="{x:Bind ViewModel.FilteredImages, Mode=OneWay}"
-                  SelectedItem="{x:Bind ViewModel.SelectedImage, Mode=TwoWay}"
+                  ItemsSource="{x:Bind ViewModel.ImagesPage.Items, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.ImagesPage.SelectedItem, Mode=TwoWay}"
                   SelectionMode="Single" Padding="0">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -143,19 +143,19 @@
         </ListView>
 
         <StackPanel Grid.Row="4" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasImages), Mode=OneWay}">
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.ImagesPage.HasItems), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.ImagesPage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="本地还没有镜像" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock Text="在上方输入镜像引用后点击「拉取」，例如 alpine:latest。" FontSize="12.5"
                            MaxWidth="380" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,0"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.ImagesPage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="没有匹配的镜像" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Button Content="清除搜索" HorizontalAlignment="Center" Margin="0,12,0,0"
-                        Command="{x:Bind ViewModel.ClearSearchCommand}" />
+                        Command="{x:Bind ViewModel.ImagesPage.ClearSearchCommand}" />
             </StackPanel>
         </StackPanel>
     </Grid>
