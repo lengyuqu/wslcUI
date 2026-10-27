@@ -43,8 +43,8 @@
                             ToolTipService.ToolTip="切换深色 / 亮色主题" Padding="10,4" />
                     <Button Content="详情" Command="{x:Bind ViewModel.ToggleDetailCommand}"
                             ToolTipService.ToolTip="显示 / 隐藏右侧详情面板" Padding="10,4" />
-                    <Button Content="宽" Command="{x:Bind ViewModel.ToggleDetailWidthCommand}"
-                            ToolTipService.ToolTip="详情面板宽度在 380 / 520 之间切换" Padding="10,4" />
+                    <Button Content="宽度" Command="{x:Bind ViewModel.CycleDetailWidthCommand}"
+                            ToolTipService.ToolTip="详情面板宽度：380 → 520 → 整页" Padding="10,4" />
                 </StackPanel>
             </TitleBar.RightHeader>
         </TitleBar>
@@ -69,8 +69,10 @@
         <!-- ============ 主体：导航 + 内容 | 详情面板 ============ -->
         <Grid Grid.Row="3" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
+                <!-- 列宽由 VM 算：详情切到「整页」档时左列收成 0，
+                     把整个主内容区让给 DetailPaneView。 -->
+                <ColumnDefinition Width="{x:Bind ViewModel.MainColumnWidth, Mode=OneWay}" />
+                <ColumnDefinition Width="{x:Bind ViewModel.DetailColumnWidth, Mode=OneWay}" />
             </Grid.ColumnDefinitions>
 
             <NavigationView x:Name="NavView" Grid.Column="0"

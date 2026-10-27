@@ -12,12 +12,29 @@
     <!-- 右侧详情面板：按当前页切换内容（容器 / 镜像 / 网络 / 卷 / 统计 / 构建）。
          宽度绑 ViewModel.DetailPaneWidth，顶栏「宽」按钮在 380 / 520 之间切换。
          显隐由 IsDetailPaneVisible 控制（= 用户开关 && 当前页有详情）。 -->
-    <Border Width="{x:Bind ViewModel.DetailPaneWidth, Mode=OneWay}"
+    <Border Width="{x:Bind ViewModel.DetailPaneEffectiveWidth, Mode=OneWay}"
             Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailPaneVisible), Mode=OneWay}"
             Background="{ThemeResource LayerFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
-        <ScrollViewer>
-            <StackPanel>
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="{x:Bind ViewModel.DetailPaneBorderThickness, Mode=OneWay}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- 整页模式下的返回条：侧栏档不需要（列表就在左边）。 -->
+            <Grid Grid.Row="0" Padding="16,10,12,10" ColumnSpacing="8"
+                  BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1"
+                  Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailFullPage), Mode=OneWay}">
+                <TextBlock Text="详情" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button HorizontalAlignment="Right" Padding="12,4" VerticalAlignment="Center"
+                        Content="返回列表" Click="BackToList_Click"
+                        ToolTipService.ToolTip="详情回到侧栏，列表重新显示" />
+            </Grid>
+
+            <ScrollViewer Grid.Row="1">
+                <StackPanel>
                 <!-- 容器详情 -->
                 <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsContainersPage), Mode=OneWay}">
                     <StackPanel Padding="16,14" Spacing="10"
@@ -535,6 +552,7 @@
                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                 </StackPanel>
             </StackPanel>
-        </ScrollViewer>
+            </ScrollViewer>
+        </Grid>
     </Border>
 </UserControl>

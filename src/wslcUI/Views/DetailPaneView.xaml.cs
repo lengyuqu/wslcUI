@@ -43,4 +43,11 @@ public sealed partial class DetailPaneView : UserControl
         if (!ViewModel.SelectedContainer.IsRunning) return;
         ContainerActions.OpenFiles(ViewModel.SelectedContainer.Name);
     }
+
+    /// <summary>整页模式的「返回列表」：收起整页，详情回 380 侧栏。</summary>
+    private void BackToList_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.IsDetailFullPage = false;
+        ViewModel.DetailPaneWidth = 380;
+    }
 }

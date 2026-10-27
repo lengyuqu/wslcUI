@@ -675,9 +675,43 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>
     /// 详情面板宽度。原先是硬编码 340 —— 键值行稍微长一点就换行，
-    /// inspect 原文更是挤成一团。默认放宽到 380，「宽」按钮可切到 520。
+    /// inspect 原文更是挤成一团。默认放宽到 380，「宽度」按钮循环 380 / 520 / 整页。
     /// </summary>
     [ObservableProperty] public partial double DetailPaneWidth { get; set; } = 380;
+
+    /// <summary>
+    /// 详情面板是否占满主内容区（列表列收成 0）。
+    ///
+    /// <para>
+    /// 侧栏再宽也追不上「整页 + 分区」的信息密度 —— 这是对标竞品的过渡方案：
+    /// 先让详情能整页读，页内 SelectorBar 分区留到下一轮。
+    /// </para>
+    /// </summary>
+    [ObservableProperty] public partial bool IsDetailFullPage { get; set; }
+
+    /// <summary>主内容列宽：整页详情时收成 0，把整个宽度让给详情。</summary>
+    public GridLength MainColumnWidth => IsDetailFullPage
+        ? new GridLength(0)
+        : new GridLength(1, GridUnitType.Star);
+
+    /// <summary>详情列宽：侧栏模式用 Auto（由面板自身宽度决定），整页模式吃满剩余空间。</summary>
+    public GridLength DetailColumnWidth => IsDetailFullPage
+        ? new GridLength(1, GridUnitType.Star)
+        : GridLength.Auto;
+
+    /// <summary>
+    /// 详情面板的实际宽度。<see cref="double.NaN"/> 在 XAML 里表示 Auto ——
+    /// 整页模式下必须交给父容器算，否则会被固定的 380 顶住。
+    /// </summary>
+    public double DetailPaneEffectiveWidth => IsDetailFullPage ? double.NaN : DetailPaneWidth;
+
+    /// <summary>
+    /// 面板左边框：侧栏档需要一条竖线把它和列表分开，整页档占满时那条线就成了
+    /// 无意义的装饰（右边缘还有一条贴着窗口）。
+    /// </summary>
+    public Thickness DetailPaneBorderThickness => IsDetailFullPage
+        ? new Thickness(0)
+        : new Thickness(1, 0, 0, 0);
     [ObservableProperty] public partial string LogTarget { get; set; } = "";
     [ObservableProperty] public partial ElementTheme Theme { get; set; } = ElementTheme.Default;
 
@@ -711,6 +745,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     partial void OnIsBusyChanged(bool value) => RecomputeCanStates();
 
     partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
+
+    partial void OnDetailPaneWidthChanged(double value) =>
+        OnPropertyChanged(nameof(DetailPaneEffectiveWidth));
+
+    partial void OnIsDetailFullPageChanged(bool value)
+    {
+        OnPropertyChanged(nameof(MainColumnWidth));
+        OnPropertyChanged(nameof(DetailColumnWidth));
+        OnPropertyChanged(nameof(DetailPaneEffectiveWidth));
+        OnPropertyChanged(nameof(DetailPaneBorderThickness));
+    }
 
     partial void OnSelectedContainerChanged(ContainerInfo? value)
     {
@@ -922,8 +967,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>详情面板可见性 = 用户开关 && 当前页不是概览页。</summary>
-    private void RecomputeDetailPaneVisible() =>
+    private void RecomputeDetailPaneVisible()
+    {
         IsDetailPaneVisible = IsDetailOpen && CurrentPage != ResourcePage.Dashboard;
+        // 面板不可见时必须退出整页模式：否则主内容列仍是 0 宽，
+        // 列表和详情同时消失，窗口看起来像坏了。
+        if (!IsDetailPaneVisible) IsDetailFullPage = false;
+    }
 
     /// <summary>
     /// 上一次的 CurrentPage。仅用于在 OnCurrentPageChanged 中检测"离开卷页"
@@ -1176,10 +1226,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ToggleDetail() => IsDetailOpen = !IsDetailOpen;
 
-    /// <summary>详情面板宽度在 380 / 520 之间切换（窄档看列表，宽档读 inspect / 挂载）。</summary>
+    /// <summary>
+    /// 详情面板宽度循环：380 → 520 → 整页 → 380。
+    /// 整页档把列表列收成 0，让详情占满主内容区（对标竞品的整页详情）。
+    /// </summary>
     [RelayCommand]
-    private void ToggleDetailWidth() =>
-        DetailPaneWidth = DetailPaneWidth < 500 ? 520 : 380;
+    private void CycleDetailWidth()
+    {
+        if (IsDetailFullPage)
+        {
+            IsDetailFullPage = false;
+            DetailPaneWidth = 380;
+            return;
+        }
+
+        if (DetailPaneWidth < 500)
+        {
+            DetailPaneWidth = 520;
+            return;
+        }
+
+        IsDetailFullPage = true;
+    }
     [RelayCommand]
     private void ToggleTheme() =>
         Theme = Theme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
