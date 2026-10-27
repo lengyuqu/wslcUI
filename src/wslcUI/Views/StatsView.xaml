@@ -36,11 +36,11 @@
             <Button Grid.Column="3" Content="刷新快照" Style="{StaticResource AccentButtonStyle}"
                     Command="{x:Bind ViewModel.RefreshStatsCommand}" />
             <Button Grid.Column="4" Content="开始采样"
-                    Command="{x:Bind ViewModel.ToggleSamplingCommand}"
-                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSampling), Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.Sampling.ToggleSamplingCommand}"
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Sampling.IsSampling), Mode=OneWay}" />
             <Button Grid.Column="4" Content="停止采样"
-                    Command="{x:Bind ViewModel.ToggleSamplingCommand}"
-                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSampling), Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.Sampling.ToggleSamplingCommand}"
+                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.Sampling.IsSampling), Mode=OneWay}" />
         </Grid>
 
         <Grid Grid.Row="1" Padding="12,0,12,8" ColumnSpacing="10">

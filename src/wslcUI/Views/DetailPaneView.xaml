@@ -458,7 +458,7 @@
                         <StackPanel Spacing="6">
                             <TextBlock FontSize="11.5"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}">
-                                <Run Text="实时曲线 · " /><Run Text="{x:Bind ViewModel.SparkTargetName, Mode=OneWay}" />
+                                <Run Text="实时曲线 · " /><Run Text="{x:Bind ViewModel.Sampling.SparkTargetName, Mode=OneWay}" />
                             </TextBlock>
 
                             <TextBlock Text="CPU" FontSize="11"
@@ -467,7 +467,7 @@
                                     Background="{ThemeResource LogPaneBg}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                                 <Polyline Margin="0,4" VerticalAlignment="Center"
-                                          Points="{x:Bind ViewModel.CpuSparkPoints, Mode=OneWay}"
+                                          Points="{x:Bind ViewModel.Sampling.CpuSparkPoints, Mode=OneWay}"
                                           Stroke="{ThemeResource AccentFillColorDefaultBrush}"
                                           StrokeThickness="1.5" />
                             </Border>
@@ -478,14 +478,14 @@
                                     Background="{ThemeResource LogPaneBg}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                                 <Polyline Margin="0,4" VerticalAlignment="Center"
-                                          Points="{x:Bind ViewModel.MemSparkPoints, Mode=OneWay}"
+                                          Points="{x:Bind ViewModel.Sampling.MemSparkPoints, Mode=OneWay}"
                                           Stroke="{ThemeResource SystemFillColorSuccessBrush}"
                                           StrokeThickness="1.5" />
                             </Border>
 
                             <TextBlock FontSize="11" TextWrapping="Wrap"
                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                       Text="{x:Bind ViewModel.SparkSummary, Mode=OneWay}" />
+                                       Text="{x:Bind ViewModel.Sampling.SparkSummary, Mode=OneWay}" />
                         </StackPanel>
 
                         <StackPanel>

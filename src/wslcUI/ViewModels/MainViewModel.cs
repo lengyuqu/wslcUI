@@ -99,6 +99,12 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// </summary>
     public MaintenanceViewModel Maintenance { get; }
 
+    /// <summary>
+    /// 统计页的实时采样与 sparkline 绘制（历史桶 + 计时器 + 曲线点集）。
+    /// 壳只在选中项变化时调 <c>Sampling.SetTarget(name)</c> 指目标。
+    /// </summary>
+    public StatsSamplingViewModel Sampling { get; }
+
     // ---------------- 端点页（已拆为独立 VM）----------------
     /// <summary>
     /// 端点页的页面级 ViewModel：把所有运行中容器已发布的端口聚成一张表。
@@ -405,16 +411,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         return file?.Path;
     }
 
-    // ---------------- 统计页实时采样（sparkline）----------------
-    // wslc stats 是一次性快照、不流式，所以"实时曲线"只能靠**定时轮询**自己攒历史。
-    // 历史按容器名分桶、每桶最多 MaxSamples 个点（环形丢弃最旧的）。
-
-    [ObservableProperty] public partial bool IsSampling { get; set; }
-    [ObservableProperty] public partial string SparkTargetName { get; set; } = "";
-    [ObservableProperty] public partial string SparkSummary { get; set; } = "";
-    [ObservableProperty] public partial PointCollection CpuSparkPoints { get; set; } = new();
-    [ObservableProperty] public partial PointCollection MemSparkPoints { get; set; } = new();
-
     // --- 错误 / 提示上屏（InfoBar）---
     [ObservableProperty] public partial bool IsInfoBarOpen { get; set; }
     [ObservableProperty] public partial string InfoMessage { get; set; } = "";
@@ -654,6 +650,17 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         Maintenance.Succeeded += (_, _) => IsInfoBarOpen = false;
         Maintenance.ErrorRaised += (_, ex) => ShowError(ex);
 
+        // 采样子 VM：定时器与历史桶都在它内部；壳只负责把状态栏/提示/错误接回来。
+        Sampling = new StatsSamplingViewModel(client);
+        Sampling.StatusRequested += (_, text) => Status = text;
+        Sampling.NotifyRequested += (_, e) =>
+        {
+            InfoMessage = e.Message;
+            InfoSeverity = e.Severity;
+            IsInfoBarOpen = true;
+        };
+        Sampling.ErrorRaised += (_, ex) => ShowError(ex);
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -691,7 +698,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         LogTarget = value?.Name ?? "";
         RecomputeCanStates();
         // 曲线目标在没选中 stats 行时回退到容器列表的选中项，所以这里也要跟一次。
-        RebuildSparklines();
+        RebuildSparklineTarget();
 
         // 切换选中即取消上一次的 inspect 拉取，避免延迟返回把上一选中
         // 的 Mounts 覆盖到新选中的实例。
@@ -819,7 +826,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         HasSelectedStat = value is not null;
         LogTarget = value?.Container ?? "";
         RecomputeCanStates();
-        RebuildSparklines();
+        RebuildSparklineTarget();
     }
 
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
@@ -878,7 +885,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         if (value == ResourcePage.Events) Activity.Start();
         else if (Activity.IsEventStreamRunning) Activity.Stop();
         // 离开统计页停采样：后台每 3 秒起一个 wslc 进程，不在该页时纯属浪费。
-        if (value != ResourcePage.Stats && IsSampling) StopSampling();
+        if (value != ResourcePage.Stats && Sampling.IsSampling) Sampling.Stop();
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
         SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
@@ -1298,6 +1305,15 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
                 Containers.RemoveAt(i);
         }
     }
+
+    /// <summary>
+    /// 把「当前该画哪个容器」告诉采样子 VM：优先统计页选中的行，回退到容器列表
+    /// 的选中项（与拆分前的取值顺序一致）。目标没变时子 VM 会自己跳过重画。
+    /// </summary>
+    private void RebuildSparklineTarget() =>
+        Sampling.SetTarget(SelectedStat?.Container is { Length: > 0 } stat
+            ? stat
+            : SelectedContainer?.Name);
 
     private void RebuildContainerView()
     {
@@ -1963,140 +1979,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         UpdateBulkStates();
     }
 
-    // ---------------- 统计页实时采样（sparkline）----------------
-    // wslc stats 是**一次性快照、不流式**，所以"实时曲线"只能定时轮询自己攒历史。
-    // 历史按容器名分桶，每桶最多 MaxSamples 个点，超出丢最旧的。
-
-    private const int MaxSamples = 60;
-
-    /// <summary>
-    /// 曲线绘制区尺寸。必须与 XAML 里 <c>Polyline</c> 所在 Border 的内宽一致
-    /// （详情面板 340 − StackPanel Padding 16×2 − Border 描边 ≈ 308，留 12px 余量）。
-    /// Border 高 44、曲线画 36 留上下各 4 的内边距。
-    /// </summary>
-    private const double SparkWidth = 296;
-    private const double SparkHeight = 36;
-
-    private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(3);
-
-    private readonly Dictionary<string, List<double>> _cpuHistory = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, List<double>> _memHistory = new(StringComparer.Ordinal);
-    private DispatcherQueueTimer? _sampler;
-    private bool _samplingStarted; // 首帧立即出点，不留 3 秒空白
-
-    [RelayCommand]
-    private void ToggleSampling()
-    {
-        if (IsSampling) { StopSampling(); return; }
-        StartSampling();
-    }
-
-    private void StartSampling()
-    {
-        // DispatcherQueueTimer 必须在有 UI 调度队列的线程上创建；没有就明确报错，
-        // 不要假装在采样（否则用户会以为图停住了是数据问题）。
-        var queue = DispatcherQueue.GetForCurrentThread();
-        if (queue is null)
-        {
-            InfoMessage = "当前环境没有 UI 调度队列，无法启动实时采样。";
-            InfoSeverity = InfoBarSeverity.Warning;
-            IsInfoBarOpen = true;
-            return;
-        }
-
-        if (!_samplingStarted)
-        {
-            _sampler = queue.CreateTimer();
-            _sampler.Interval = SampleInterval;
-            _sampler.IsRepeating = true;
-            _sampler.Tick += async (_, _) => await SampleOnceAsync();
-            _samplingStarted = true;
-        }
-
-        _sampler!.Start();
-        IsSampling = true;
-        Status = $"实时采样中（每 {SampleInterval.TotalSeconds:0} 秒一次）";
-        _ = SampleOnceAsync(); // 立即取一次，不等第一个 tick
-    }
-
-    private void StopSampling()
-    {
-        _sampler?.Stop();
-        IsSampling = false;
-        Status = "已停止采样（已采到的历史保留在曲线上）";
-    }
-
-    private async Task SampleOnceAsync()
-    {
-        if (!IsSampling) return;
-        try
-        {
-            var snapshot = await _client.GetStatsSnapshotAsync(CancellationToken.None);
-            foreach (var s in snapshot)
-            {
-                // 表格路径来的 StatInfo 没有数值（HasNumbers=false），跳过而不是记 0 ——
-                // 记 0 会在曲线上画出一个假的"归零"。
-                if (!s.HasNumbers) continue;
-                Append(_cpuHistory, s.Container, s.CpuPercent);
-                Append(_memHistory, s.Container, s.MemUsedBytes / 1024d / 1024d); // 统一成 MB
-            }
-            RebuildSparklines();
-        }
-        catch (Exception ex)
-        {
-            // 采样是后台行为，失败不该反复弹 InfoBar：报一次 + 自动停采样。
-            ShowError(ex);
-            StopSampling();
-        }
-    }
-
-    private static void Append(Dictionary<string, List<double>> bucket, string key, double value)
-    {
-        if (!bucket.TryGetValue(key, out var list))
-        {
-            list = new List<double>(MaxSamples);
-            bucket[key] = list;
-        }
-        list.Add(value);
-        if (list.Count > MaxSamples) list.RemoveAt(0);
-    }
-
-    /// <summary>
-    /// 重画曲线。目标容器：优先统计页选中的行，回退到容器列表的选中项。
-    /// 两条曲线都**自动按本批最大值缩放**，因此图上的绝对高度本身没有意义 ——
-    /// 峰值数字放在 <see cref="SparkSummary"/> 里，避免读图误判。
-    /// </summary>
-    private void RebuildSparklines()
-    {
-        var target = SelectedStat?.Container;
-        if (string.IsNullOrEmpty(target)) target = SelectedContainer?.Name;
-        target ??= "";
-        SparkTargetName = target.Length == 0 ? "（未选中容器）" : target;
-
-        if (target.Length == 0 ||
-            !_cpuHistory.TryGetValue(target, out var cpu) || cpu.Count == 0 ||
-            !_memHistory.TryGetValue(target, out var mem) || mem.Count == 0)
-        {
-            CpuSparkPoints = new PointCollection();
-            MemSparkPoints = new PointCollection();
-            SparkSummary = target.Length == 0
-                ? "选中一个容器后开始采样。"
-                : "尚无采样数据 —— 点「开始采样」。";
-            return;
-        }
-
-        CpuSparkPoints = ToPoints(SparklineGeometry.Build(cpu, SparkWidth, SparkHeight));
-        MemSparkPoints = ToPoints(SparklineGeometry.Build(mem, SparkWidth, SparkHeight));
-        SparkSummary = $"CPU 峰值 {cpu.Max():0.0}% · 内存峰值 {SizeParser.Format((long)(mem.Max() * 1024 * 1024))} · 样本 {cpu.Count}";
-    }
-
-    private static PointCollection ToPoints(IReadOnlyList<(double X, double Y)> points)
-    {
-        var collection = new PointCollection();
-        foreach (var (x, y) in points)
-            collection.Add(new Windows.Foundation.Point(x, y));
-        return collection;
-    }
 
     /// <summary>
     /// 关掉两条后台资源。<b>由 DI 容器调用</b>：MainWindow.Closed → App.Services.Dispose()
@@ -2109,10 +1991,9 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// </summary>
     public void Dispose()
     {
-        StopSampling();
-        // 计时器无需（也不能）Dispose：DispatcherQueueTimer 只有 Start/Stop，
-        // 随所属 DispatcherQueue 一起回收。
-        _sampler = null;
+        // 采样计时器与历史桶都在采样子 VM 里，Stop 即停表（计时器不实现 IDisposable，
+        // 随所属 DispatcherQueue 一起回收）。
+        Sampling.Stop();
         // 无条件调用：意外退出路径只把 IsEventStreamRunning 置 false、并未解绑，
         // 这里要连订阅一起收掉（Stop 本身幂等）。
         Activity.Stop();
