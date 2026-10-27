@@ -71,9 +71,32 @@
             <Style x:Key="MetricCardStyle" TargetType="Border">
                 <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="6" />
-                <Setter Property="Padding" Value="14,10" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="Padding" Value="16,14" />
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            </Style>
+
+            <!-- 概览页卡片。圆角 10 / 内边距 18,16 / 卡片间距 14 统一落在
+                 WinUI 的 8pt 网格上（4/8/12/16/24/32），比原来的 6 / 14,10 更接近
+                 Fluent 卡片的比例，也让窗口缩放时各页留白看起来是一套。 -->
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="10" />
+                <Setter Property="Padding" Value="18,16" />
+            </Style>
+
+            <!-- 卡片里的主数字：靠字重拉层次，30px 对应 WinUI 的 Subtitle 档。 -->
+            <Style x:Key="CardValueStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="30" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+
+            <!-- 页面副标题：主标题沿用系统 TitleTextBlockStyle，这里只补次级说明。 -->
+            <Style x:Key="PageSubtitleStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
             </Style>
 
             <!-- 详情面板键值行。只接管 Grid 的 margin/padding/spacing，

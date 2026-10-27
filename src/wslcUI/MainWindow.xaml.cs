@@ -17,11 +17,19 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         this.InitializeComponent();
+        // TitleBar 控件要求内容延伸到标题栏区域：不设这个标志，窗口顶部会同时
+        // 出现系统标题栏和我们的 TitleBar（高度翻倍、按钮点不到）。
+        this.ExtendsContentIntoTitleBar = true;
         ViewModel = App.Services.GetRequiredService<MainViewModel>();
         // Hand the owner HWND to the VM so its FolderPicker can parent correctly.
         ViewModel.OwnerHandle = WindowNative.GetWindowHandle(this);
         // Set window size (WinUI 3 Window has no Height/Width XAML attributes)
-        this.AppWindow.Resize(new Windows.Graphics.SizeInt32(1100, 860));
+        // 1280x900：够放下 220px 导航 + 340px 详情栏后主列表仍有两列可用宽度；
+        // 1100x860 在 1440p 上显得局促，概览页四张卡会被压扁。
+        this.AppWindow.Resize(new Windows.Graphics.SizeInt32(1280, 900));
+        // NavigationView 的 pane 在窗口初始化阶段会被算成收起（compact），
+        // 显式展开一次，避免首次启动只有一条图标带。
+        NavView.IsPaneOpen = true;
         // Auto-load data once the window is activated (Window has no Loaded event).
         this.Activated += MainWindow_Activated;
         // 关窗即释放 DI 容器：WslcSdkClient.Dispose 会 Terminate SDK Session，
@@ -129,6 +137,9 @@ public sealed partial class MainWindow : Window
     {
         this.Activated -= MainWindow_Activated;
         await ViewModel.RefreshCommand.ExecuteAsync(null);
+        // 无条件跑一次：首屏是概览页，且状态栏的 wslc 版本号也来自这里
+        // （system info 是唯一的引擎版本来源）。
+        await ViewModel.RefreshDashboardCommand.ExecuteAsync(null);
     }
 
     /// <summary>

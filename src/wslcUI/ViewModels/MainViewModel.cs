@@ -21,6 +21,8 @@ namespace wslcUI.ViewModels;
 /// <summary>左侧导航的九个页面。替换原先平铺的 Pivot。</summary>
 public enum ResourcePage
 {
+    /// <summary>概览页：汇总卡 + 引擎健康 + 运行中容器性能表。启动默认落在这里。</summary>
+    Dashboard,
     Containers,
     Images,
     Networks,
@@ -605,10 +607,32 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
     [ObservableProperty] public partial bool CanAttachContainer { get; set; }
 
+    // ---------------- 概览页（Dashboard）----------------
+    // 首屏汇总：4 张计数卡 + 引擎健康卡 + 运行中容器性能表。
+    // 计数一律走显式 [ObservableProperty] 字符串，而不是 get-only 派生属性 ——
+    // 容器列表是**就地合并**（UpdateContainersInPlace 复用实例、不替换集合），
+    // 集合级 [NotifyPropertyChangedFor] 不会触发，派生属性会一直显示陈旧数字。
+    [ObservableProperty] public partial string DashboardRunningText { get; set; } = "0";
+    [ObservableProperty] public partial string DashboardContainerTotalText { get; set; } = "0";
+    [ObservableProperty] public partial string DashboardImageCountText { get; set; } = "0";
+    [ObservableProperty] public partial string DashboardNetworkCountText { get; set; } = "0";
+    [ObservableProperty] public partial string DashboardVolumeCountText { get; set; } = "0";
+    [ObservableProperty] public partial string DashboardCpuTotalText { get; set; } = "—";
+    [ObservableProperty] public partial bool HasDashboardStats { get; set; }
+
+    // 引擎健康（数据来自 `wslc system info`）。Healthy 只在成功拿到版本号时为 true，
+    // 拿不到就报「引擎不可用」而不是假装正常——概览页的首要职责是让故障可见。
+    [ObservableProperty] public partial bool EngineHealthy { get; set; }
+    [ObservableProperty] public partial string EngineStatusText { get; set; } = "检测中…";
+    [ObservableProperty] public partial string EngineWslVersion { get; set; } = "—";
+    [ObservableProperty] public partial string EngineKernelVersion { get; set; } = "—";
+    [ObservableProperty] public partial string EngineSessionText { get; set; } = "—";
+
     // ---------------- 导航 / 搜索 / 排序 / 面板 ----------------
 
-    [ObservableProperty] public partial ResourcePage CurrentPage { get; set; } = ResourcePage.Containers;
-    [ObservableProperty] public partial bool IsContainersPage { get; set; } = true;
+    [ObservableProperty] public partial ResourcePage CurrentPage { get; set; } = ResourcePage.Dashboard;
+    [ObservableProperty] public partial bool IsDashboardPage { get; set; } = true;
+    [ObservableProperty] public partial bool IsContainersPage { get; set; }
     [ObservableProperty] public partial bool IsImagesPage { get; set; }
     [ObservableProperty] public partial bool IsNetworksPage { get; set; }
     [ObservableProperty] public partial bool IsVolumesPage { get; set; }
@@ -641,6 +665,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty] public partial bool IsLogPaneOpen { get; set; }
     [ObservableProperty] public partial bool IsDetailOpen { get; set; } = true;
+
+    /// <summary>
+    /// 详情面板的实际可见性 = 用户开关 && 当前页有详情可看。
+    /// 概览页没有「选中项」这个前提，340px 的固定面板只会白占宽度，
+    /// 所以进概览页时强制收起；离开时按用户原开关恢复。
+    /// </summary>
+    [ObservableProperty] public partial bool IsDetailPaneVisible { get; set; } = true;
     [ObservableProperty] public partial string LogTarget { get; set; } = "";
     [ObservableProperty] public partial ElementTheme Theme { get; set; } = ElementTheme.Default;
 
@@ -663,11 +694,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _client = client;
         _dialogs = dialogs;
         RecomputeCanStates();
+        // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
+        // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
+        // 初始值白占宽度，概览页右侧留出一大片空白。
+        RecomputeDetailPaneVisible();
     }
 
     // ---------------- 属性变更钩子 ----------------
 
     partial void OnIsBusyChanged(bool value) => RecomputeCanStates();
+
+    partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
 
     partial void OnSelectedContainerChanged(ContainerInfo? value)
     {
@@ -837,6 +874,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
         _lastPage = value;
 
+        IsDashboardPage = value == ResourcePage.Dashboard;
         IsContainersPage = value == ResourcePage.Containers;
         IsImagesPage = value == ResourcePage.Images;
         IsNetworksPage = value == ResourcePage.Networks;
@@ -846,6 +884,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IsMaintenancePage = value == ResourcePage.Maintenance;
         IsEndpointsPage = value == ResourcePage.Endpoints;
         IsEventsPage = value == ResourcePage.Events;
+        // 进概览页刷新仪表盘：计数来自已加载集合（同步重算即可），
+        // 引擎版本与资源快照要起子进程，走 fire-and-forget 不阻塞切页。
+        if (value == ResourcePage.Dashboard)
+        {
+            UpdateDashboardSummary();
+            _ = RefreshDashboardAsync();
+        }
         // 进维护页时重算占用/可回收计数（数字来自 Images/Containers 的当前内容，
         // 而这两个集合可能在别的页面被就地合并过，光靠属性通知不可靠）。
         if (value == ResourcePage.Maintenance) UpdateMaintenanceSummary();
@@ -865,7 +910,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // 切到卷页且已选某卷时，重算反向表（用户可能新点过容器）。
         if (value == ResourcePage.Volumes && SelectedVolume is not null)
             RecomputeUsedBy(SelectedVolume);
+
+        // 详情面板跟着页面走：概览页没有选中项，面板收起。
+        RecomputeDetailPaneVisible();
     }
+
+    /// <summary>详情面板可见性 = 用户开关 && 当前页不是概览页。</summary>
+    private void RecomputeDetailPaneVisible() =>
+        IsDetailPaneVisible = IsDetailOpen && CurrentPage != ResourcePage.Dashboard;
 
     /// <summary>
     /// 上一次的 CurrentPage。仅用于在 OnCurrentPageChanged 中检测"离开卷页"
@@ -1117,7 +1169,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void ToggleDetail() => IsDetailOpen = !IsDetailOpen;
-
     [RelayCommand]
     private void ToggleTheme() =>
         Theme = Theme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
@@ -1309,6 +1360,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             UpdateMaintenanceSummary();
             RebuildEndpoints();
             UpdateBulkStates();
+            // 概览页计数卡跟着集合走：RefreshAsync 是全量刷新，这里重算一次最省事。
+            UpdateDashboardSummary();
 
             Status = $"已加载 {Containers.Count} 容器 / {Images.Count} 镜像 / {Networks.Count} 网络 / {Volumes.Count} 卷";
             IsInfoBarOpen = false;
@@ -1562,6 +1615,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var stats = await _client.GetStatsAsync(ct);
             Stats = new ObservableCollection<StatInfo>(stats);
             RebuildContainerView();
+            // 快照换了，概览页的 CPU 合计与性能表要同步。
+            UpdateDashboardSummary();
             Status = $"已加载 {Stats.Count} 个容器的资源统计";
             IsInfoBarOpen = false;
         }
@@ -1572,6 +1627,94 @@ public partial class MainViewModel : ObservableObject, IDisposable
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    // ---------------- 概览页数据 ----------------
+
+    /// <summary>
+    /// 重算概览页计数卡与 CPU 汇总。纯内存计算、不起子进程，
+    /// 所以主刷新、stats 快照、进页时都可以随时调。
+    /// </summary>
+    private void UpdateDashboardSummary()
+    {
+        DashboardRunningText = Containers.Count(c => c.IsRunning).ToString(CultureInfo.InvariantCulture);
+        DashboardContainerTotalText = Containers.Count.ToString(CultureInfo.InvariantCulture);
+        DashboardImageCountText = Images.Count.ToString(CultureInfo.InvariantCulture);
+        DashboardNetworkCountText = Networks.Count.ToString(CultureInfo.InvariantCulture);
+        DashboardVolumeCountText = Volumes.Count.ToString(CultureInfo.InvariantCulture);
+
+        var cpuTotal = 0d;
+        var cpuKnown = false;
+        foreach (var s in Stats)
+        {
+            if (!TryParsePercent(s.Cpu, out var pct)) continue;
+            cpuTotal += pct;
+            cpuKnown = true;
+        }
+        // 全都解析不出来时显示破折号而不是 0% —— 0% 会被读成「确实没跑东西」。
+        DashboardCpuTotalText = cpuKnown ? $"{cpuTotal:0.0}%" : "—";
+        HasDashboardStats = Stats.Count > 0;
+    }
+
+    /// <summary>
+    /// 解析 <c>12.30%</c> 这类展示字符串。空串、<c>N/A</c>、<c>--</c> 一律返回 false，
+    /// 让调用方跳过而不是按 0 计入总和。
+    /// </summary>
+    private static bool TryParsePercent(string? text, out double value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var s = text.Trim();
+        if (s.EndsWith('%')) s = s[..^1];
+        return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+    }
+
+    /// <summary>
+    /// 概览页刷新：引擎信息与资源快照是两条独立子进程调用，各自 try 包住 ——
+    /// 引擎没起来时资源快照仍能部分成功，反之亦然。
+    /// </summary>
+    [RelayCommand]
+    private async Task RefreshDashboardAsync()
+    {
+        UpdateDashboardSummary();
+
+        // ---- 引擎健康（wslc system info）----
+        try
+        {
+            var info = await _client.GetSystemInfoAsync(CancellationToken.None);
+            EngineWslVersion = string.IsNullOrWhiteSpace(info.WslVersion) ? "—" : info.WslVersion;
+            EngineKernelVersion = string.IsNullOrWhiteSpace(info.KernelVersion) ? "—" : info.KernelVersion;
+            EngineSessionText = info.SessionCount is > 0
+                ? $"{info.SessionCount} 个活动会话"
+                : "无活动会话";
+            // 版本号是引擎活着的唯一可靠证据：HasAnyInfo 为假说明 system info 什么都没解析到。
+            EngineHealthy = info.HasAnyInfo;
+            EngineStatusText = EngineHealthy ? "引擎运行中" : "引擎无响应";
+        }
+        catch (System.Exception ex)
+        {
+            EngineHealthy = false;
+            EngineStatusText = "引擎不可用";
+            EngineWslVersion = "—";
+            EngineKernelVersion = "—";
+            EngineSessionText = "—";
+            // 概览页只把原因写进状态栏，不弹 InfoBar —— 进页就弹错误条过于打扰。
+            Status = $"读取引擎信息失败：{ex.Message}";
+        }
+
+        // ---- 资源快照（wslc stats -a）----
+        try
+        {
+            var stats = await _client.GetStatsAsync(CancellationToken.None);
+            Stats = new ObservableCollection<StatInfo>(stats);
+            RebuildContainerView();
+            UpdateDashboardSummary();
+        }
+        catch (System.Exception)
+        {
+            // 没有运行中容器时 stats 可能报错，这属于正常空态，静默处理。
+            UpdateDashboardSummary();
         }
     }
 

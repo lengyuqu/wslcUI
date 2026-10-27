@@ -10,9 +10,15 @@
     mc:Ignorable="d"
     Title="wslcUI — WSL 容器管理">
 
+    <!-- Mica 让窗口底色跟桌面壁纸同源，是 Fluent 观感的第一层。
+         Windows 10 上 WinUI 会自动回退成纯色，不影响可用性。 -->
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+
     <Grid x:Name="Root">
         <Grid.RowDefinitions>
-            <RowDefinition Height="40" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -21,21 +27,24 @@
             <RowDefinition Height="28" />
         </Grid.RowDefinitions>
 
-        <!-- ============ 顶栏 ============ -->
-        <Grid Grid.Row="0" Padding="14,0" ColumnSpacing="12"
-              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
-                <TextBlock Text="wslcUI" FontWeight="SemiBold" FontSize="13" />
-                <TextBlock Text="WSL 容器管理" FontSize="12"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" VerticalAlignment="Center">
-                <Button Content="主题" Command="{x:Bind ViewModel.ToggleThemeCommand}"
-                        ToolTipService.ToolTip="切换深色 / 亮色主题" Padding="10,4" />
-                <Button Content="详情" Command="{x:Bind ViewModel.ToggleDetailCommand}"
-                        ToolTipService.ToolTip="显示 / 隐藏右侧详情面板" Padding="10,4" />
-            </StackPanel>
-        </Grid>
+        <!-- ============ 标题栏 ============ -->
+        <!-- 用 WinUI TitleBar 控件接管系统窗口按钮与拖拽区域：
+             自绘顶栏在 Win11 上会丢掉 Mica 的标题栏延伸、贴边最大化的圆角也会错。
+             折叠按钮留在 NavigationView 自己身上（PaneDisplayMode=Left 时它常驻可见），
+             这里不再重复放一个。 -->
+        <TitleBar x:Name="AppTitleBar" Grid.Row="0"
+                  Title="wslcUI" Subtitle="WSL 容器管理"
+                  IsBackButtonVisible="False"
+                  IsPaneToggleButtonVisible="False">
+            <TitleBar.RightHeader>
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button Content="主题" Command="{x:Bind ViewModel.ToggleThemeCommand}"
+                            ToolTipService.ToolTip="切换深色 / 亮色主题" Padding="10,4" />
+                    <Button Content="详情" Command="{x:Bind ViewModel.ToggleDetailCommand}"
+                            ToolTipService.ToolTip="显示 / 隐藏右侧详情面板" Padding="10,4" />
+                </StackPanel>
+            </TitleBar.RightHeader>
+        </TitleBar>
 
         <!-- ============ 错误 / 提示（InfoBar） ============ -->
         <!-- IsOpen 必须 TwoWay：InfoBar 自带的关闭按钮只改控件本地值，OneWay 下
@@ -62,42 +71,287 @@
             </Grid.ColumnDefinitions>
 
             <NavigationView x:Name="NavView" Grid.Column="0"
-                            PaneDisplayMode="Left" OpenPaneLength="220" IsPaneToggleButtonVisible="True"
+                            PaneDisplayMode="Left" OpenPaneLength="220"
+                            IsPaneToggleButtonVisible="True"
                             IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
                             SelectionChanged="NavView_SelectionChanged">
                 <NavigationView.MenuItems>
-                    <NavigationViewItem IsSelected="True" Content="容器" Tag="Containers">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="List" /></NavigationViewItem.Icon>
+                    <!-- 图标统一走 Segoe Fluent Icons（FontIcon + Glyph），不用 SymbolIcon：
+                         Symbol 枚举只有百来个字形，容器/镜像/网络这类领域图标全缺，
+                         混用就会出现「一半语义化一半通用」的观感断层。 -->
+                    <NavigationViewItem IsSelected="True" Content="概览" Tag="Dashboard">
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
+                    </NavigationViewItem>
+                    <NavigationViewItem Content="容器" Tag="Containers">
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="镜像" Tag="Images">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="Pictures" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xEB9F;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="网络" Tag="Networks">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="World" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE968;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="卷" Tag="Volumes">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="Save" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE8B7;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItemSeparator />
                     <NavigationViewItem Content="统计" Tag="Stats">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="FourBars" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="构建" Tag="Build">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="Repair" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE90F;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="维护" Tag="Maintenance">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="Delete" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xEDA2;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="端点" Tag="Endpoints">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="Link" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE774;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                     <NavigationViewItem Content="活动" Tag="Events">
-                        <NavigationViewItem.Icon><SymbolIcon Symbol="FourBars" /></NavigationViewItem.Icon>
+                        <NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon>
                     </NavigationViewItem>
                 </NavigationView.MenuItems>
 
                 <NavigationView.Content>
                     <Grid>
+
+                        <!-- ============ 概览页 ============ -->
+                        <!-- 首屏聚合：进来先看清「引擎活着吗、有多少资源、谁在吃 CPU」，
+                             再去具体页面操作。计数卡的数据来自已加载集合（同步重算），
+                             引擎版本与资源快照由 RefreshDashboardCommand 起子进程拉取。 -->
+                        <ScrollViewer Padding="24,16,24,24"
+                                      Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDashboardPage), Mode=OneWay}">
+                            <StackPanel Spacing="16">
+
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="概览" Style="{StaticResource TitleTextBlockStyle}" />
+                                    <TextBlock Style="{StaticResource PageSubtitleStyle}"
+                                               Text="WSL 容器引擎与资源的当前状态" />
+                                </StackPanel>
+
+                                <!-- 计数卡 -->
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon FontSize="16" Glyph="&#xE7F4;"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="运行中容器"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource CardValueStyle}"
+                                                       Text="{x:Bind ViewModel.DashboardRunningText, Mode=OneWay}" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}">
+                                                <Run Text="共 " /><Run Text="{x:Bind ViewModel.DashboardContainerTotalText, Mode=OneWay}" /><Run Text=" 个容器" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon FontSize="16" Glyph="&#xEB9F;"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="镜像"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource CardValueStyle}"
+                                                       Text="{x:Bind ViewModel.DashboardImageCountText, Mode=OneWay}" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Text="本地已存储" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon FontSize="16" Glyph="&#xE968;"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="网络"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource CardValueStyle}"
+                                                       Text="{x:Bind ViewModel.DashboardNetworkCountText, Mode=OneWay}" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Text="含 bridge / host / none" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="3" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon FontSize="16" Glyph="&#xE8B7;"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="卷"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource CardValueStyle}"
+                                                       Text="{x:Bind ViewModel.DashboardVolumeCountText, Mode=OneWay}" />
+                                            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Text="具名卷" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <!-- 引擎健康 + CPU 合计 -->
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.7*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="10">
+                                            <Grid>
+                                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                    <Ellipse Width="12" Height="12" VerticalAlignment="Center"
+                                                             Fill="{ThemeResource SystemFillColorSuccessBrush}"
+                                                             Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.EngineHealthy), Mode=OneWay}" />
+                                                    <Ellipse Width="12" Height="12" VerticalAlignment="Center"
+                                                             Fill="{ThemeResource SystemFillColorCriticalBrush}"
+                                                             Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.EngineHealthy), Mode=OneWay}" />
+                                                    <TextBlock Text="WSL 引擎" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                                    <TextBlock VerticalAlignment="Center"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               Text="{x:Bind ViewModel.EngineStatusText, Mode=OneWay}" />
+                                                </StackPanel>
+                                                <Button HorizontalAlignment="Right" Padding="10,4" Content="刷新"
+                                                        Command="{x:Bind ViewModel.RefreshDashboardCommand}"
+                                                        ToolTipService.ToolTip="重新读取引擎信息与资源快照" />
+                                            </Grid>
+
+                                            <Grid ColumnSpacing="24" RowSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="WSL 版本"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Grid.Row="0" Grid.Column="1" FontFamily="Consolas" FontSize="12"
+                                                           Text="{x:Bind ViewModel.EngineWslVersion, Mode=OneWay}" />
+
+                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="内核版本"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Grid.Row="1" Grid.Column="1" FontFamily="Consolas" FontSize="12"
+                                                           Text="{x:Bind ViewModel.EngineKernelVersion, Mode=OneWay}" />
+
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="会话"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                                <TextBlock Grid.Row="2" Grid.Column="1" FontSize="12"
+                                                           Text="{x:Bind ViewModel.EngineSessionText, Mode=OneWay}" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                                        <StackPanel Spacing="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon FontSize="16" Glyph="&#xE9D9;"
+                                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                                <TextBlock Text="CPU 合计"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            </StackPanel>
+                                            <TextBlock Style="{StaticResource CardValueStyle}"
+                                                       Text="{x:Bind ViewModel.DashboardCpuTotalText, Mode=OneWay}" />
+                                            <TextBlock FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Text="所有容器之和（stats 快照）。要曲线看「统计」页。" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <!-- 运行中容器性能 -->
+                                <Border Style="{StaticResource CardStyle}">
+                                    <StackPanel Spacing="12">
+                                        <Grid>
+                                            <TextBlock Text="容器性能" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                       Text="一次性读数，非实时曲线" />
+                                        </Grid>
+
+                                        <Grid Padding="8,0,8,4" ColumnSpacing="12"
+                                              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                              BorderThickness="0,0,0,1">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.6*" />
+                                                <ColumnDefinition Width="90" />
+                                                <ColumnDefinition Width="1.4*" />
+                                                <ColumnDefinition Width="1.2*" />
+                                                <ColumnDefinition Width="1.2*" />
+                                                <ColumnDefinition Width="70" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="名称" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="1" Text="CPU" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="2" Text="内存" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="3" Text="网络 I/O" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="4" Text="块 I/O" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <TextBlock Grid.Column="5" Text="PIDs" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Grid>
+
+                                        <!-- 用 ItemsControl 而不是 ListView：ListView 自带 ScrollViewer，
+                                             嵌在外层 ScrollViewer 里会形成双层滚动。容器数量级不大，不需要虚拟化。 -->
+                                        <ItemsControl ItemsSource="{x:Bind ViewModel.Stats, Mode=OneWay}"
+                                                      Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasDashboardStats), Mode=OneWay}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="models:StatInfo">
+                                                    <Grid Padding="8,5" ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="1.6*" />
+                                                            <ColumnDefinition Width="90" />
+                                                            <ColumnDefinition Width="1.4*" />
+                                                            <ColumnDefinition Width="1.2*" />
+                                                            <ColumnDefinition Width="1.2*" />
+                                                            <ColumnDefinition Width="70" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                                                                   Text="{x:Bind Container}" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                                                   FontFamily="Consolas" FontSize="12" Text="{x:Bind Cpu}" />
+                                                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                                                   FontFamily="Consolas" FontSize="12" Text="{x:Bind Mem}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="3" VerticalAlignment="Center"
+                                                                   FontFamily="Consolas" FontSize="12" Text="{x:Bind NetIo}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                                                                   FontFamily="Consolas" FontSize="12" Text="{x:Bind BlockIo}"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Grid.Column="5" VerticalAlignment="Center"
+                                                                   FontFamily="Consolas" FontSize="12" Text="{x:Bind Pids}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+
+                                        <TextBlock FontSize="12" TextWrapping="Wrap"
+                                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                   Text="还没有容器在运行。到「容器」页启动一个，或到「镜像」页拉取镜像后运行。"
+                                                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasDashboardStats), Mode=OneWay}" />
+                                    </StackPanel>
+                                </Border>
+
+                            </StackPanel>
+                        </ScrollViewer>
 
                         <!-- 容器页 -->
                         <Grid Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsContainersPage), Mode=OneWay}">
@@ -1212,7 +1466,7 @@
 
             <!-- ============ 详情面板 ============ -->
             <Border Grid.Column="1" Width="340"
-                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailOpen), Mode=OneWay}"
+                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailPaneVisible), Mode=OneWay}"
                     Background="{ThemeResource LayerFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
                 <ScrollViewer>
@@ -1779,7 +2033,9 @@
             <TextBlock HorizontalAlignment="Right" FontSize="11.5" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}">
                 <Run Text="{x:Bind ViewModel.StatusBarSummary, Mode=OneWay}" />
-                <Run Text=" · wslc 3.0.1" />
+                <!-- 版本号原先是硬编码的 "wslc 3.0.1"，升到 3.0.4 后一直显示错的。
+                     改绑 system info 的实测值；未取到时为空，不会显示假版本。 -->
+                <Run Text=" · wslc " /><Run Text="{x:Bind ViewModel.EngineWslVersion, Mode=OneWay}" />
             </TextBlock>
         </Grid>
     </Grid>
