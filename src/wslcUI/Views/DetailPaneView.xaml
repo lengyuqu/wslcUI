@@ -379,10 +379,10 @@
                 <!-- 卷详情 -->
                 <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsVolumesPage), Mode=OneWay}">
                     <StackPanel Padding="16,14" Spacing="10"
-                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedVolume), Mode=OneWay}">
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.VolumePage.HasSelected), Mode=OneWay}">
                         <TextBlock Text="卷 · 详情" FontSize="11.5"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.SelectedVolume.Name, Mode=OneWay}"
+                        <TextBlock Text="{x:Bind ViewModel.VolumePage.SelectedItem.Name, Mode=OneWay}"
                                    FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <StackPanel>
                             <Grid Style="{StaticResource KvRowStyle}">
@@ -392,7 +392,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="驱动" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{x:Bind ViewModel.SelectedVolume.Driver, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.VolumePage.SelectedItem.Driver, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -401,14 +401,14 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="挂载点" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
-                                           Text="{x:Bind ViewModel.SelectedVolume.Mountpoint, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.VolumePage.SelectedItem.Mountpoint, Mode=OneWay}" />
                             </Grid>
                         </StackPanel>
 
                         <TextBlock Text="被以下容器使用" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedVolume.UsedBy, Mode=OneWay}"
-                                      Visibility="{x:Bind ViewModel.SelectedVolume.HasUsedBy, Mode=OneWay}">
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.VolumePage.SelectedItem.UsedBy, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.VolumePage.SelectedItem.HasUsedBy, Mode=OneWay}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="x:String">
                                     <Grid Padding="0,2" ColumnSpacing="6">
@@ -425,14 +425,14 @@
                         <TextBlock Text="暂无已查看的容器引用此卷。"
                                    FontSize="12" TextWrapping="Wrap"
                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedVolume.HasUsedBy), Mode=OneWay}" />
-                        <TextBlock Text="{x:Bind ViewModel.UninspectedForVolumeHint, Mode=OneWay}"
+                                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.VolumePage.SelectedItem.HasUsedBy), Mode=OneWay}" />
+                        <TextBlock Text="{x:Bind ViewModel.VolumePage.UninspectedForVolumeHint, Mode=OneWay}"
                                    FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 
                         <Button Content="删除卷" HorizontalAlignment="Stretch" Margin="0,12,0,0"
-                                Command="{x:Bind ViewModel.RemoveVolumeCommand}"
-                                IsEnabled="{x:Bind ViewModel.CanActOnVolume, Mode=OneWay}"
+                                Command="{x:Bind ViewModel.VolumePage.RemoveVolumeCommand}"
+                                IsEnabled="{x:Bind ViewModel.VolumePage.CanAct, Mode=OneWay}"
                                 Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                     </StackPanel>
                     <StackPanel Padding="16,14" Spacing="8">

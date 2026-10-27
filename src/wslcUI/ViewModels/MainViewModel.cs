@@ -81,11 +81,9 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     [ObservableProperty] public partial ContainerInfo? SelectedContainer { get; set; }
     [ObservableProperty] public partial ImageInfo? SelectedImage { get; set; }
-    [ObservableProperty] public partial VolumeInfo? SelectedVolume { get; set; }
     [ObservableProperty] public partial StatInfo? SelectedStat { get; set; }
 
     [ObservableProperty] public partial string PullReference { get; set; } = "alpine:latest";
-    [ObservableProperty] public partial string NewVolumeName { get; set; } = "";
     [ObservableProperty] public partial string Logs { get; set; } = "";
 
     // ---------------- 维护页（磁盘占用 + 一键清理）----------------
@@ -109,6 +107,11 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// 原名 <c>Networks</c> 冲突（原始集合已占），故带 Page 后缀以示「这是页面」。
     /// </summary>
     public NetworksViewModel NetworkPage { get; }
+
+    /// <summary>
+    /// 卷页的页面级 ViewModel：列表 / 搜索 / 排序 / 增删 + 反向挂载映射。
+    /// </summary>
+    public VolumesViewModel VolumePage { get; }
 
     // ---------------- 端点页（已拆为独立 VM）----------------
     /// <summary>
@@ -424,20 +427,16 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     // --- 派生状态：列表是否有数据（空状态用）。基于过滤后的集合。---
     [ObservableProperty] public partial bool HasContainers { get; set; }
     [ObservableProperty] public partial bool HasImages { get; set; }
-    [ObservableProperty] public partial bool HasVolumes { get; set; }
     [ObservableProperty] public partial bool HasStats { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
     [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
     [ObservableProperty] public partial bool HasSelectedImage { get; set; }
-    [ObservableProperty] public partial bool HasSelectedVolume { get; set; }
     [ObservableProperty] public partial bool HasSelectedStat { get; set; }
 
     // --- 派生状态：按钮是否可点（选中 / 输入 / 空闲 的组合）---
     [ObservableProperty] public partial bool CanActOnContainer { get; set; }
     [ObservableProperty] public partial bool CanActOnImage { get; set; }
-    [ObservableProperty] public partial bool CanActOnVolume { get; set; }
-    [ObservableProperty] public partial bool CanCreateVolume { get; set; }
     [ObservableProperty] public partial bool CanPull { get; set; }
     // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
     [ObservableProperty] public partial bool CanAttachContainer { get; set; }
@@ -484,7 +483,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     [ObservableProperty] public partial ObservableCollection<ContainerInfo> FilteredContainers { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<ImageInfo> FilteredImages { get; set; } = new();
-    [ObservableProperty] public partial ObservableCollection<VolumeInfo> FilteredVolumes { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<StatInfo> FilteredStats { get; set; } = new();
 
     /// <summary>指标卡与状态栏用的计数文本。用 string 而非 int，避免 x:Bind 的类型转换坑。</summary>
@@ -604,7 +602,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         ResourcePage.Containers => HasSelectedContainer,
         ResourcePage.Images => HasSelectedImage,
         ResourcePage.Networks => NetworkPage.SelectedItem is not null,
-        ResourcePage.Volumes => HasSelectedVolume,
+        ResourcePage.Volumes => VolumePage.SelectedItem is not null,
         ResourcePage.Stats => HasSelectedStat,
         _ => false,
     };
@@ -668,6 +666,13 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         NetworkPage.Succeeded += (_, _) => IsInfoBarOpen = false;
         NetworkPage.ErrorRaised += (_, ex) => ShowError(ex);
 
+        // 卷页子 VM：比网络页多一条反向挂载映射（UsedBy），算法在纯函数里。
+        VolumePage = new VolumesViewModel(this, client, dialogs);
+        VolumePage.BusyChanged += (_, busy) => IsBusy = busy;
+        VolumePage.StatusRequested += (_, text) => Status = text;
+        VolumePage.Succeeded += (_, _) => IsInfoBarOpen = false;
+        VolumePage.ErrorRaised += (_, ex) => ShowError(ex);
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -685,6 +690,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 保住「任何长操作期间都不该并发 prune」这条原有约束。
         Maintenance.SetGlobalBusy(value);
         NetworkPage.SetGlobalBusy(value);
+        VolumePage.SetGlobalBusy(value);
     }
 
     partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
@@ -762,8 +768,8 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
             live.MountsLoaded = true;
 
             // 容器挂载变了 → 若卷页正显示某卷，反向表可能需要刷新。
-            if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
-                RecomputeUsedBy(SelectedVolume);
+            if (CurrentPage == ResourcePage.Volumes)
+                VolumePage.RecomputeUsedBy(VolumePage.SelectedItem);
         }
         catch (OperationCanceledException) { /* 切换或 dispose，忽略 */ }
         catch (System.Exception ex)
@@ -779,55 +785,13 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         }
     }
 
-    /// <summary>
-    /// 选中卷变化、容器 Mounts 写入后、RefreshAsync 后、切到卷页时调用，重算 UsedBy。
-    /// 提取自 OnSelectedVolumeChanged 内联段——三处触发共享同一扫描逻辑。
-    /// 核心算法抽到 <see cref="VolumeReverseMapping.Match"/> 作纯函数以便单测。
-    /// </summary>
-    private void RecomputeUsedBy(VolumeInfo? volume)
-    {
-        if (volume is null) return;
-
-        var (usedBy, notInspected) = VolumeReverseMapping.Match(Containers, volume.Name);
-        volume.UsedBy = usedBy;
-
-        // 仅在计数变化时通知 hint，避免反复切卷导致 XAML 重复拉 binding。
-        if (_uninspectedContainerCountForSelectedVolume != notInspected)
-        {
-            _uninspectedContainerCountForSelectedVolume = notInspected;
-            OnPropertyChanged(nameof(UninspectedForVolumeHint));
-        }
-    }
     partial void OnSelectedImageChanged(ImageInfo? value)
     {
         HasSelectedImage = value is not null;
         LogTarget = value is null ? "" : value.Reference;
         RecomputeCanStates();
     }
-    partial void OnSelectedVolumeChanged(VolumeInfo? value)
-    {
-        HasSelectedVolume = value is not null;
-        RecomputeCanStates();
 
-        // 反向扫描：已 inspect 过的容器中哪些引用了此卷。
-        // 按 mount.Name == volume.Name 匹配（区分大小写：wslc 自身大小写敏感）。
-        // 仅覆盖**已 MountsLoaded** 的容器——未点过的容器 Mounts 仍为空、
-        // 误判为零 = 把未查当无引用，混进"未使用"分类会误导用户删除。
-        // 因此用空 UsedBy + 一个提示文案坦白："其他容器尚未查看"。
-        RecomputeUsedBy(value);
-    }
-
-    /// <summary>
-    /// 当前选中卷对应的"还有多少容器未 inspect"统计。
-    /// OnSelectedVolumeChanged 每次扫描时刷新；外部 Cancel 切换时不清
-    /// （让用户切回能恢复显示，提示"还有 N 个未查"是有用的提示）。
-    /// </summary>
-    private int _uninspectedContainerCountForSelectedVolume;
-
-    public string UninspectedForVolumeHint =>
-        _uninspectedContainerCountForSelectedVolume == 0
-            ? ""
-            : $"还有 {_uninspectedContainerCountForSelectedVolume} 个容器未查看（点过容器详情才会触发 inspect）。";
     partial void OnSelectedStatChanged(StatInfo? value)
     {
         HasSelectedStat = value is not null;
@@ -839,11 +803,10 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
     partial void OnImagesChanged(ObservableCollection<ImageInfo> value) => ApplyFilter();
     partial void OnNetworksChanged(ObservableCollection<NetworkInfo> value) => NetworkPage.Refresh();
-    partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => ApplyFilter();
+    partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => VolumePage.Refresh();
     partial void OnStatsChanged(ObservableCollection<StatInfo> value) => ApplyFilter();
 
     partial void OnPullReferenceChanged(string value) => RecomputeCanStates();
-    partial void OnNewVolumeNameChanged(string value) => RecomputeCanStates();
 
     partial void OnSearchTextChanged(string value)
     {
@@ -853,14 +816,9 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     partial void OnCurrentPageChanged(ResourcePage value)
     {
-        // 离开卷页时清零"未查容器"提示计数：旧值属于上一卷的扫描，
-        // 切回去 OnSelectedVolumeChanged 会重算；但留在原地读会显示陈旧数字。
-        if (_lastPage == ResourcePage.Volumes && value != ResourcePage.Volumes &&
-            _uninspectedContainerCountForSelectedVolume != 0)
-        {
-            _uninspectedContainerCountForSelectedVolume = 0;
-            OnPropertyChanged(nameof(UninspectedForVolumeHint));
-        }
+        // 离开卷页时清零「未查容器」提示计数：旧值属于上一卷的扫描，留着会显示陈旧数字。
+        if (_lastPage == ResourcePage.Volumes && value != ResourcePage.Volumes)
+            VolumePage.OnPageLeft();
         _lastPage = value;
 
         IsDashboardPage = value == ResourcePage.Dashboard;
@@ -896,11 +854,11 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         SearchText = "";
         // 网络页的搜索已下沉到子 VM，切页也要清，否则残留上一轮的过滤条件。
         NetworkPage.SearchText = "";
+        VolumePage.SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
 
-        // 切到卷页且已选某卷时，重算反向表（用户可能新点过容器）。
-        if (value == ResourcePage.Volumes && SelectedVolume is not null)
-            RecomputeUsedBy(SelectedVolume);
+        // 切到卷页时重算反向表（用户可能新点过容器）。
+        if (value == ResourcePage.Volumes) VolumePage.OnPageEntered();
 
         // 详情面板跟着页面走：概览页没有选中项，面板收起。
         RecomputeDetailPaneVisible();
@@ -926,8 +884,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         CanActOnContainer = HasSelectedContainer && !IsBusy;
         CanAttachContainer = HasSelectedContainer && !IsBusy && SelectedContainer is { IsRunning: true };
         CanActOnImage = HasSelectedImage && !IsBusy;
-        CanActOnVolume = HasSelectedVolume && !IsBusy;
-        CanCreateVolume = !IsBusy && !string.IsNullOrWhiteSpace(NewVolumeName);
         CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
 
         OnPropertyChanged(nameof(HasSelection));
@@ -949,7 +905,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 指不到才清空（该行真消失了）。不依赖"ListView 在 Remove 时会不会把 TwoWay
         // 的 SelectedX 回写成 null"这种版本相关行为 —— 回不回来都由这里兜住。
         var keepImage = SelectedImage?.Reference;
-        var keepVolume = SelectedVolume?.Name;
         var keepStat = SelectedStat?.Container;
 
         var visibleContainers = Containers
@@ -988,19 +943,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 重指不到才清空（镜像真被删了 / 被搜索条件排除）。
         if (SelectedImage is null || !FilteredImages.Contains(SelectedImage))
             SelectedImage = keepImage is null ? null : images.FirstOrDefault(i => i.Reference == keepImage);
-        var volumes = OrderBy(
-            Volumes.Where(v => Matches(q, v.Name, v.Driver, v.Mountpoint)),
-            SortedColumn switch
-            {
-                "Driver" => v => v.Driver,
-                "Mountpoint" => v => v.Mountpoint,
-                _ => v => v.Name,
-            },
-            numeric: false, desc);
-        SyncInView(FilteredVolumes, volumes);
-        if (SelectedVolume is null || !FilteredVolumes.Contains(SelectedVolume))
-            SelectedVolume = keepVolume is null ? null : volumes.FirstOrDefault(v => v.Name == keepVolume);
-
         var stats = OrderBy(
             Stats.Where(s => Matches(q, s.Container)),
             SortedColumn switch
@@ -1019,7 +961,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
         HasContainers = FilteredContainers.Count > 0;
         HasImages = FilteredImages.Count > 0;
-        HasVolumes = FilteredVolumes.Count > 0;
         HasStats = FilteredStats.Count > 0;
 
         // 5 个 summary 字符串已改为 get-only，XAML 拉 binding 时按 5 个集合实时算。
@@ -1310,11 +1251,10 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         MergeStatsIntoContainers();
         ApplyFilter();
 
-        // 卷页在当前可见且已选中某卷时，新一次 Refresh 容器列表可能
-        // 改写 Mounts（同一实例 INPC，但**新增**容器可能也用了它）；
+        // 卷页在当前可见时，新一次 Refresh 容器列表可能改写 Mounts；
         // 重新扫一次确保反向映射不陈旧。
-        if (CurrentPage == ResourcePage.Volumes && SelectedVolume is not null)
-            RecomputeUsedBy(SelectedVolume);
+        if (CurrentPage == ResourcePage.Volumes)
+            VolumePage.RecomputeUsedBy(VolumePage.SelectedItem);
     }
 
     private static string LabelOf(string column) => column switch
@@ -1680,60 +1620,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         {
             // 没有运行中容器时 stats 可能报错，这属于正常空态，静默处理。
             UpdateDashboardSummary();
-        }
-    }
-
-    [RelayCommand]
-    private async Task CreateVolumeAsync()
-    {
-        var name = NewVolumeName.Trim();
-        if (string.IsNullOrWhiteSpace(name)) return;
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"创建卷 {name} …";
-        try
-        {
-            await _client.CreateVolumeAsync(name, ct);
-            NewVolumeName = "";
-            await RefreshVolumesAsync();
-            Status = $"卷 {name} 已创建";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RemoveVolumeAsync()
-    {
-        if (SelectedVolume is null) return;
-        var name = SelectedVolume.Name;
-        if (_dialogs is not null &&
-            !await _dialogs.ConfirmAsync("删除卷", $"确定删除卷「{name}」吗？此操作不可撤销。"))
-            return;
-
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"删除卷 {name} …";
-        try
-        {
-            await _client.RemoveVolumeAsync(name, ct);
-            SelectedVolume = null;
-            await RefreshVolumesAsync();
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 

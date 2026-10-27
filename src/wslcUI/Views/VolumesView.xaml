@@ -29,16 +29,16 @@
             <TextBlock Grid.Column="0" Text="卷" FontSize="15" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <TextBox Grid.Column="1" PlaceholderText="搜索卷…" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.VolumePage.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <TextBox Grid.Column="2" PlaceholderText="新卷名称" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.NewVolumeName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.VolumePage.NewVolumeName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="3" Content="新建卷" Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.CreateVolumeCommand}"
-                    IsEnabled="{x:Bind ViewModel.CanCreateVolume, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.VolumePage.CreateVolumeCommand}"
+                    IsEnabled="{x:Bind ViewModel.VolumePage.CanCreate, Mode=OneWay}" />
             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <TextBlock FontSize="12" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}">
-                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.SortSummary, Mode=OneWay}" />
+                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.VolumePage.SortSummary, Mode=OneWay}" />
                 </TextBlock>
                 <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
             </StackPanel>
@@ -52,16 +52,16 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Content="名称" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Name" />
+                    Command="{x:Bind ViewModel.VolumePage.SortByCommand}" CommandParameter="Name" />
             <Button Grid.Column="1" Content="驱动" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Driver" />
+                    Command="{x:Bind ViewModel.VolumePage.SortByCommand}" CommandParameter="Driver" />
             <Button Grid.Column="2" Content="挂载点" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Mountpoint" />
+                    Command="{x:Bind ViewModel.VolumePage.SortByCommand}" CommandParameter="Mountpoint" />
         </Grid>
 
         <ListView Grid.Row="2" Margin="12,0"
-                  ItemsSource="{x:Bind ViewModel.FilteredVolumes, Mode=OneWay}"
-                  SelectedItem="{x:Bind ViewModel.SelectedVolume, Mode=TwoWay}"
+                  ItemsSource="{x:Bind ViewModel.VolumePage.Items, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.VolumePage.SelectedItem, Mode=TwoWay}"
                   SelectionMode="Single" Padding="0">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -91,19 +91,19 @@
         </ListView>
 
         <StackPanel Grid.Row="2" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasVolumes), Mode=OneWay}">
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.VolumePage.HasItems), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.VolumePage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="暂无数据卷" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock Text="卷用于持久化容器数据，删除容器后依然保留。" FontSize="12.5"
                            MaxWidth="380" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,0"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.VolumePage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="没有匹配的卷" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Button Content="清除搜索" HorizontalAlignment="Center" Margin="0,12,0,0"
-                        Command="{x:Bind ViewModel.ClearSearchCommand}" />
+                        Command="{x:Bind ViewModel.VolumePage.ClearSearchCommand}" />
             </StackPanel>
         </StackPanel>
     </Grid>
