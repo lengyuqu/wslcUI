@@ -31,23 +31,23 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        Text="wslc 主动推送的实时事件，比轮询更快看到容器启停与网络变更。离开本页自动停止监听。" />
             <Button Grid.Column="2" Content="清空" MinWidth="76"
-                    Command="{x:Bind ViewModel.ClearEventsCommand}" />
+                    Command="{x:Bind ViewModel.Activity.ClearEventsCommand}" />
             <Button Grid.Column="3" Content="刷新列表" MinWidth="96"
                     Command="{x:Bind ViewModel.RefreshCommand}" />
             <Button Grid.Column="4" MinWidth="96"
                     Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.ToggleEventStreamCommand}"
-                    Content="{x:Bind ViewModel.EventStreamButtonText, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.Activity.ToggleEventStreamCommand}"
+                    Content="{x:Bind ViewModel.Activity.EventStreamButtonText, Mode=OneWay}" />
         </Grid>
 
         <StackPanel Grid.Row="1" Padding="12,0,12,6" Orientation="Horizontal" Spacing="10">
             <TextBlock FontSize="12" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                       Text="{x:Bind ViewModel.ActivitySummary, Mode=OneWay}" />
+                       Text="{x:Bind ViewModel.Activity.ActivitySummary, Mode=OneWay}" />
         </StackPanel>
 
         <Grid Grid.Row="2">
-            <ListView ItemsSource="{x:Bind ViewModel.Events, Mode=OneWay}"
+            <ListView ItemsSource="{x:Bind ViewModel.Activity.Events, Mode=OneWay}"
                       SelectionMode="None" Padding="0">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
@@ -88,7 +88,7 @@
             <TextBlock Text="进入本页即开始监听。容器启停、网络连接等事件会实时出现在这里。"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasEvents), Mode=OneWay}" />
+                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Activity.HasEvents), Mode=OneWay}" />
         </Grid>
     </Grid>
 </UserControl>

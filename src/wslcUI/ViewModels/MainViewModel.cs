@@ -160,158 +160,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial bool CanBulkStop { get; set; }
     [ObservableProperty] public partial bool CanBulkDelete { get; set; }
 
-    // ---------------- 活动流（wslc events 实时流）----------------
-    // 与统计页的 3 秒轮询不同：事件流由 wslc 主动推送，容器启停/网络变更
-    // 发生的瞬间就能拿到，不必等下一轮轮询。
-    //
-    // ⚠️ 事件流是**永不结束**的长驻进程（实测：带 --since 也不自行退出，
-    // 退出码 124 = 被 timeout 杀），所以：① 绝不 ReadToEndAsync；
-    // ② 离开本页必须 Stop()，否则会留下一个常驻 wslc 进程。
-    // 详见 Services/EventStreamService.cs 类注释。
-
-    [ObservableProperty] public partial ObservableCollection<ContainerEvent> Events { get; set; } = new();
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ActivitySummary))]
-    [NotifyPropertyChangedFor(nameof(EventStreamButtonText))]
-    public partial bool IsEventStreamRunning { get; set; }
-
-    [ObservableProperty] public partial bool HasEvents { get; set; }
-
-    /// <summary>事件总数（受 MaxEvents 环形上限约束，故为「最近 N 条」）。</summary>
-    public string EventCountText => Events.Count.ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>工具条上的状态摘要。</summary>
-    public string ActivitySummary => IsEventStreamRunning
-        ? $"监听中 · 最近 {Events.Count} 条"
-        : (Events.Count > 0 ? $"已停止 · 留存 {Events.Count} 条" : "未开始监听");
-
-    /// <summary>开始/停止按钮的文案（随运行状态切换）。</summary>
-    public string EventStreamButtonText => IsEventStreamRunning ? "停止监听" : "开始监听";
-
-    // 事件列表的环形上限：长驻监听下无界增长会吃爆内存。
-    private const int MaxEvents = 500;
-
-    private readonly EventStreamService _eventStream = new();
-
+    // ---------------- 活动页（已拆为独立 VM）----------------
     /// <summary>
-    /// UI 线程的调度队列，在 <see cref="StartEventStream"/>（跑在 UI 线程上）时捕获。
-    /// 事件回调来自 wslc 子进程的读取线程，那里 <c>GetForCurrentThread()</c> 返回
-    /// null —— 必须提前存住 UI 队列才能把事件 marshal 回去。
+    /// 活动页面的页面级 ViewModel（<c>wslc events</c> 实时流）。
+    ///
+    /// <para>
+    /// 第一个从本类拆出去的子 VM：它只依赖 <c>EventStreamService</c> 与一个 UI
+    /// 调度队列，状态自洽；与本类的耦合只剩「弹提示 / 写状态栏 / 报错」三件事，
+    /// 全部走事件上抛，由本类决定怎么呈现。
+    /// </para>
     /// </summary>
-    private Microsoft.UI.Dispatching.DispatcherQueue? _uiQueue;
-
-    /// <summary>开始/停止事件流。进活动页自动开始，离开自动停止。</summary>
-    [RelayCommand]
-    private void ToggleEventStream()
-    {
-        if (_eventStream.IsRunning) StopEventStream();
-        else StartEventStream();
-    }
-
-    private void StartEventStream(string? since = null)
-    {
-        if (_eventStream.IsRunning) return;
-
-        // 事件回调在后台线程，必须先抓住 UI 队列（见 _uiQueue 注释）。
-        _uiQueue ??= Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        if (_uiQueue is null)
-        {
-            InfoMessage = "当前环境没有 UI 调度队列，无法监听事件。";
-            InfoSeverity = InfoBarSeverity.Warning;
-            IsInfoBarOpen = true;
-            return;
-        }
-
-        // 先解绑再绑定：意外退出路径（OnEventStreamExited）只把 IsEventStreamRunning
-        // 置 false、并不解绑，这里若直接 += 就给同一个事件挂了第二个处理器 ——
-        // 活动流每行重复出现，而且每重启一次再多泄漏一个订阅。
-        _eventStream.EventReceived -= OnEventReceived;
-        _eventStream.ErrorReceived -= OnEventStreamError;
-        _eventStream.Exited -= OnEventStreamExited;
-        _eventStream.EventReceived += OnEventReceived;
-        _eventStream.ErrorReceived += OnEventStreamError;
-        _eventStream.Exited += OnEventStreamExited;
-        try
-        {
-            _eventStream.Start(since);
-            IsEventStreamRunning = true;
-            Status = "正在监听容器事件…";
-        }
-        catch (System.Exception ex)
-        {
-            StopEventStream();
-            ShowError(ex);
-        }
-    }
-
-    private void StopEventStream()
-    {
-        _eventStream.EventReceived -= OnEventReceived;
-        _eventStream.ErrorReceived -= OnEventStreamError;
-        _eventStream.Exited -= OnEventStreamExited;
-        _eventStream.Stop();
-        IsEventStreamRunning = false;
-        OnPropertyChanged(nameof(ActivitySummary));
-    }
-
-    /// <summary>
-    /// 事件回调来自后台线程（wslc 进程的 stdout 读取线程），
-    /// 必须切回 UI 线程才能动 ObservableCollection。
-    /// </summary>
-    private void OnEventReceived(object? sender, ContainerEvent e)
-    {
-        var q = _uiQueue;
-        if (q is null) return;
-        if (q.HasThreadAccess) AppendEvent(e);
-        else q.TryEnqueue(() => AppendEvent(e));
-    }
-
-    private void AppendEvent(ContainerEvent e)
-    {
-        // 最新的排在最上面，与「刚发生的事最该被看到」一致。
-        Events.Insert(0, e);
-        while (Events.Count > MaxEvents) Events.RemoveAt(Events.Count - 1);
-        HasEvents = Events.Count > 0;
-        OnPropertyChanged(nameof(EventCountText));
-        OnPropertyChanged(nameof(ActivitySummary));
-    }
-
-    private void OnEventStreamError(object? sender, string message)
-    {
-        var q = _uiQueue;
-        if (q is null) return;
-        void Show()
-        {
-            InfoMessage = $"事件流出错：{message}";
-            InfoSeverity = InfoBarSeverity.Warning;
-            IsInfoBarOpen = true;
-        }
-        if (q.HasThreadAccess) Show(); else q.TryEnqueue(Show);
-    }
-
-    private void OnEventStreamExited(object? sender, int exitCode)
-    {
-        var q = _uiQueue;
-        if (q is null) return;
-        void Show()
-        {
-            IsEventStreamRunning = false;
-            InfoMessage = $"事件流已退出（exit {exitCode}）。可点「开始监听」重新开始。";
-            InfoSeverity = InfoBarSeverity.Informational;
-            IsInfoBarOpen = true;
-        }
-        if (q.HasThreadAccess) Show(); else q.TryEnqueue(Show);
-    }
-
-    [RelayCommand]
-    private void ClearEvents()
-    {
-        Events.Clear();
-        HasEvents = false;
-        OnPropertyChanged(nameof(EventCountText));
-        OnPropertyChanged(nameof(ActivitySummary));
-    }
+    public ActivityViewModel Activity { get; }
 
     // ---------------- 镜像仓库与出向操作（push / tag / 登录）----------------
     // 此前镜像页只能「进」（pull）不能「出」（push），闭环缺失。密码一律走
@@ -733,6 +592,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         _client = client;
         _dialogs = dialogs;
+
+        // 活动页子 VM：只把它需要的三件事接回来，其余自理。
+        Activity = new ActivityViewModel();
+        Activity.NotifyRequested += (_, e) =>
+        {
+            InfoMessage = e.Message;
+            InfoSeverity = e.Severity;
+            IsInfoBarOpen = true;
+        };
+        Activity.StatusRequested += (_, text) => Status = text;
+        Activity.ErrorRaised += (_, ex) => ShowError(ex);
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -950,8 +821,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (value == ResourcePage.Endpoints) RebuildEndpoints();
         // 进活动页开流、离开立刻关流：事件流是**永不退出**的长驻 wslc 进程，
         // 不关就会一直占着一个子进程 + 管道，与统计页的采样同理。
-        if (value == ResourcePage.Events) StartEventStream();
-        else if (IsEventStreamRunning) StopEventStream();
+        if (value == ResourcePage.Events) Activity.Start();
+        else if (Activity.IsEventStreamRunning) Activity.Stop();
         // 离开统计页停采样：后台每 3 秒起一个 wslc 进程，不在该页时纯属浪费。
         if (value != ResourcePage.Stats && IsSampling) StopSampling();
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
@@ -2405,8 +2276,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // 随所属 DispatcherQueue 一起回收。
         _sampler = null;
         // 无条件调用：意外退出路径只把 IsEventStreamRunning 置 false、并未解绑，
-        // 这里要连订阅一起收掉（StopEventStream 本身幂等）。
-        StopEventStream();
+        // 这里要连订阅一起收掉（Stop 本身幂等）。
+        Activity.Stop();
 
         _opCts?.Cancel();
         _opCts?.Dispose();
