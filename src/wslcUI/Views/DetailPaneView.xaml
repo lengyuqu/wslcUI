@@ -337,10 +337,10 @@
                 <!-- 网络详情 -->
                 <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsNetworksPage), Mode=OneWay}">
                     <StackPanel Padding="16,14" Spacing="10"
-                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedNetwork), Mode=OneWay}">
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.NetworkPage.HasSelected), Mode=OneWay}">
                         <TextBlock Text="网络 · 详情" FontSize="11.5"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.SelectedNetwork.Name, Mode=OneWay}"
+                        <TextBlock Text="{x:Bind ViewModel.NetworkPage.SelectedItem.Name, Mode=OneWay}"
                                    FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <StackPanel>
                             <Grid Style="{StaticResource KvRowStyle}">
@@ -350,7 +350,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="驱动" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{x:Bind ViewModel.SelectedNetwork.Driver, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.NetworkPage.SelectedItem.Driver, Mode=OneWay}" />
                             </Grid>
                             <Grid Style="{StaticResource KvRowStyle}">
                                 <Grid.ColumnDefinitions>
@@ -359,12 +359,12 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="作用域" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <TextBlock HorizontalAlignment="Right"
-                                           Text="{x:Bind ViewModel.SelectedNetwork.Scope, Mode=OneWay}" />
+                                           Text="{x:Bind ViewModel.NetworkPage.SelectedItem.Scope, Mode=OneWay}" />
                             </Grid>
                         </StackPanel>
                         <Button Content="删除网络" HorizontalAlignment="Stretch" Margin="0,12,0,0"
-                                Command="{x:Bind ViewModel.RemoveNetworkCommand}"
-                                IsEnabled="{x:Bind ViewModel.CanActOnNetwork, Mode=OneWay}"
+                                Command="{x:Bind ViewModel.NetworkPage.RemoveNetworkCommand}"
+                                IsEnabled="{x:Bind ViewModel.NetworkPage.CanAct, Mode=OneWay}"
                                 Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
                     </StackPanel>
                     <StackPanel Padding="16,14" Spacing="8">

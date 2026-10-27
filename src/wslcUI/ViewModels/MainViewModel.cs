@@ -81,12 +81,10 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     [ObservableProperty] public partial ContainerInfo? SelectedContainer { get; set; }
     [ObservableProperty] public partial ImageInfo? SelectedImage { get; set; }
-    [ObservableProperty] public partial NetworkInfo? SelectedNetwork { get; set; }
     [ObservableProperty] public partial VolumeInfo? SelectedVolume { get; set; }
     [ObservableProperty] public partial StatInfo? SelectedStat { get; set; }
 
     [ObservableProperty] public partial string PullReference { get; set; } = "alpine:latest";
-    [ObservableProperty] public partial string NewNetworkName { get; set; } = "";
     [ObservableProperty] public partial string NewVolumeName { get; set; } = "";
     [ObservableProperty] public partial string Logs { get; set; } = "";
 
@@ -104,6 +102,13 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     /// 壳只在选中项变化时调 <c>Sampling.SetTarget(name)</c> 指目标。
     /// </summary>
     public StatsSamplingViewModel Sampling { get; }
+
+    /// <summary>
+    /// 网络页的页面级 ViewModel：列表 / 搜索 / 排序 / 增删。
+    /// 过滤与排序机制在 <see cref="FilteredListViewModel{T}"/> 基类里。
+    /// 原名 <c>Networks</c> 冲突（原始集合已占），故带 Page 后缀以示「这是页面」。
+    /// </summary>
+    public NetworksViewModel NetworkPage { get; }
 
     // ---------------- 端点页（已拆为独立 VM）----------------
     /// <summary>
@@ -419,23 +424,19 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     // --- 派生状态：列表是否有数据（空状态用）。基于过滤后的集合。---
     [ObservableProperty] public partial bool HasContainers { get; set; }
     [ObservableProperty] public partial bool HasImages { get; set; }
-    [ObservableProperty] public partial bool HasNetworks { get; set; }
     [ObservableProperty] public partial bool HasVolumes { get; set; }
     [ObservableProperty] public partial bool HasStats { get; set; }
 
     // --- 派生状态：是否有选中项（按钮启用用）---
     [ObservableProperty] public partial bool HasSelectedContainer { get; set; }
     [ObservableProperty] public partial bool HasSelectedImage { get; set; }
-    [ObservableProperty] public partial bool HasSelectedNetwork { get; set; }
     [ObservableProperty] public partial bool HasSelectedVolume { get; set; }
     [ObservableProperty] public partial bool HasSelectedStat { get; set; }
 
     // --- 派生状态：按钮是否可点（选中 / 输入 / 空闲 的组合）---
     [ObservableProperty] public partial bool CanActOnContainer { get; set; }
     [ObservableProperty] public partial bool CanActOnImage { get; set; }
-    [ObservableProperty] public partial bool CanActOnNetwork { get; set; }
     [ObservableProperty] public partial bool CanActOnVolume { get; set; }
-    [ObservableProperty] public partial bool CanCreateNetwork { get; set; }
     [ObservableProperty] public partial bool CanCreateVolume { get; set; }
     [ObservableProperty] public partial bool CanPull { get; set; }
     // attach 仅对运行中容器有意义：未运行时容器内无前台进程可附加。
@@ -483,7 +484,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     [ObservableProperty] public partial ObservableCollection<ContainerInfo> FilteredContainers { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<ImageInfo> FilteredImages { get; set; } = new();
-    [ObservableProperty] public partial ObservableCollection<NetworkInfo> FilteredNetworks { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<VolumeInfo> FilteredVolumes { get; set; } = new();
     [ObservableProperty] public partial ObservableCollection<StatInfo> FilteredStats { get; set; } = new();
 
@@ -603,7 +603,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
     {
         ResourcePage.Containers => HasSelectedContainer,
         ResourcePage.Images => HasSelectedImage,
-        ResourcePage.Networks => HasSelectedNetwork,
+        ResourcePage.Networks => NetworkPage.SelectedItem is not null,
         ResourcePage.Volumes => HasSelectedVolume,
         ResourcePage.Stats => HasSelectedStat,
         _ => false,
@@ -661,6 +661,13 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         };
         Sampling.ErrorRaised += (_, ex) => ShowError(ex);
 
+        // 网络页子 VM：过滤/排序/选中保持都在基类，这里只接四个上抛通道。
+        NetworkPage = new NetworksViewModel(this, client, dialogs);
+        NetworkPage.BusyChanged += (_, busy) => IsBusy = busy;
+        NetworkPage.StatusRequested += (_, text) => Status = text;
+        NetworkPage.Succeeded += (_, _) => IsInfoBarOpen = false;
+        NetworkPage.ErrorRaised += (_, ex) => ShowError(ex);
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -677,6 +684,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 自己的 IsPruning，会把「主刷新正在进行」漏掉 —— 这里把全局忙碌同步过去，
         // 保住「任何长操作期间都不该并发 prune」这条原有约束。
         Maintenance.SetGlobalBusy(value);
+        NetworkPage.SetGlobalBusy(value);
     }
 
     partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
@@ -796,7 +804,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         LogTarget = value is null ? "" : value.Reference;
         RecomputeCanStates();
     }
-    partial void OnSelectedNetworkChanged(NetworkInfo? value) { HasSelectedNetwork = value is not null; RecomputeCanStates(); }
     partial void OnSelectedVolumeChanged(VolumeInfo? value)
     {
         HasSelectedVolume = value is not null;
@@ -831,12 +838,11 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
     partial void OnImagesChanged(ObservableCollection<ImageInfo> value) => ApplyFilter();
-    partial void OnNetworksChanged(ObservableCollection<NetworkInfo> value) => ApplyFilter();
+    partial void OnNetworksChanged(ObservableCollection<NetworkInfo> value) => NetworkPage.Refresh();
     partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => ApplyFilter();
     partial void OnStatsChanged(ObservableCollection<StatInfo> value) => ApplyFilter();
 
     partial void OnPullReferenceChanged(string value) => RecomputeCanStates();
-    partial void OnNewNetworkNameChanged(string value) => RecomputeCanStates();
     partial void OnNewVolumeNameChanged(string value) => RecomputeCanStates();
 
     partial void OnSearchTextChanged(string value)
@@ -888,6 +894,8 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         if (value != ResourcePage.Stats && Sampling.IsSampling) Sampling.Stop();
         // 切页即清空搜索，避免"上页的过滤条件残留到本页"这种隐形状态。
         SearchText = "";
+        // 网络页的搜索已下沉到子 VM，切页也要清，否则残留上一轮的过滤条件。
+        NetworkPage.SearchText = "";
         OnPropertyChanged(nameof(HasSelection));
 
         // 切到卷页且已选某卷时，重算反向表（用户可能新点过容器）。
@@ -918,9 +926,7 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         CanActOnContainer = HasSelectedContainer && !IsBusy;
         CanAttachContainer = HasSelectedContainer && !IsBusy && SelectedContainer is { IsRunning: true };
         CanActOnImage = HasSelectedImage && !IsBusy;
-        CanActOnNetwork = HasSelectedNetwork && !IsBusy;
         CanActOnVolume = HasSelectedVolume && !IsBusy;
-        CanCreateNetwork = !IsBusy && !string.IsNullOrWhiteSpace(NewNetworkName);
         CanCreateVolume = !IsBusy && !string.IsNullOrWhiteSpace(NewVolumeName);
         CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
 
@@ -943,7 +949,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 指不到才清空（该行真消失了）。不依赖"ListView 在 Remove 时会不会把 TwoWay
         // 的 SelectedX 回写成 null"这种版本相关行为 —— 回不回来都由这里兜住。
         var keepImage = SelectedImage?.Reference;
-        var keepNetwork = SelectedNetwork?.Name;
         var keepVolume = SelectedVolume?.Name;
         var keepStat = SelectedStat?.Container;
 
@@ -983,20 +988,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         // 重指不到才清空（镜像真被删了 / 被搜索条件排除）。
         if (SelectedImage is null || !FilteredImages.Contains(SelectedImage))
             SelectedImage = keepImage is null ? null : images.FirstOrDefault(i => i.Reference == keepImage);
-
-        var networks = OrderBy(
-            Networks.Where(n => Matches(q, n.Name, n.Driver, n.Scope)),
-            SortedColumn switch
-            {
-                "Driver" => n => n.Driver,
-                "Scope" => n => n.Scope,
-                _ => n => n.Name,
-            },
-            numeric: false, desc);
-        SyncInView(FilteredNetworks, networks);
-        if (SelectedNetwork is null || !FilteredNetworks.Contains(SelectedNetwork))
-            SelectedNetwork = keepNetwork is null ? null : networks.FirstOrDefault(n => n.Name == keepNetwork);
-
         var volumes = OrderBy(
             Volumes.Where(v => Matches(q, v.Name, v.Driver, v.Mountpoint)),
             SortedColumn switch
@@ -1028,7 +1019,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
         HasContainers = FilteredContainers.Count > 0;
         HasImages = FilteredImages.Count > 0;
-        HasNetworks = FilteredNetworks.Count > 0;
         HasVolumes = FilteredVolumes.Count > 0;
         HasStats = FilteredStats.Count > 0;
 
@@ -1690,60 +1680,6 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
         {
             // 没有运行中容器时 stats 可能报错，这属于正常空态，静默处理。
             UpdateDashboardSummary();
-        }
-    }
-
-    [RelayCommand]
-    private async Task CreateNetworkAsync()
-    {
-        var name = NewNetworkName.Trim();
-        if (string.IsNullOrWhiteSpace(name)) return;
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"创建网络 {name} …";
-        try
-        {
-            await _client.CreateNetworkAsync(name, ct);
-            NewNetworkName = "";
-            await RefreshNetworksAsync();
-            Status = $"网络 {name} 已创建";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private async Task RemoveNetworkAsync()
-    {
-        if (SelectedNetwork is null) return;
-        var name = SelectedNetwork.Name;
-        if (_dialogs is not null &&
-            !await _dialogs.ConfirmAsync("删除网络", $"确定删除网络「{name}」吗？此操作不可撤销。"))
-            return;
-
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"删除网络 {name} …";
-        try
-        {
-            await _client.RemoveNetworkAsync(name, ct);
-            SelectedNetwork = null;
-            await RefreshNetworksAsync();
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 

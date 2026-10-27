@@ -29,16 +29,16 @@
             <TextBlock Grid.Column="0" Text="网络" FontSize="15" FontWeight="SemiBold"
                        VerticalAlignment="Center" Margin="0,0,12,0" />
             <TextBox Grid.Column="1" PlaceholderText="搜索网络…" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.NetworkPage.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <TextBox Grid.Column="2" PlaceholderText="新网络名称" VerticalAlignment="Center"
-                     Text="{x:Bind ViewModel.NewNetworkName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                     Text="{x:Bind ViewModel.NetworkPage.NewNetworkName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             <Button Grid.Column="3" Content="新建网络" Style="{StaticResource AccentButtonStyle}"
-                    Command="{x:Bind ViewModel.CreateNetworkCommand}"
-                    IsEnabled="{x:Bind ViewModel.CanCreateNetwork, Mode=OneWay}" />
+                    Command="{x:Bind ViewModel.NetworkPage.CreateNetworkCommand}"
+                    IsEnabled="{x:Bind ViewModel.NetworkPage.CanCreate, Mode=OneWay}" />
             <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <TextBlock FontSize="12" VerticalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}">
-                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.SortSummary, Mode=OneWay}" />
+                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.NetworkPage.SortSummary, Mode=OneWay}" />
                 </TextBlock>
                 <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}" />
             </StackPanel>
@@ -52,16 +52,16 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Content="名称" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Name" />
+                    Command="{x:Bind ViewModel.NetworkPage.SortByCommand}" CommandParameter="Name" />
             <Button Grid.Column="1" Content="驱动" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Driver" />
+                    Command="{x:Bind ViewModel.NetworkPage.SortByCommand}" CommandParameter="Driver" />
             <Button Grid.Column="2" Content="作用域" Style="{StaticResource HeaderButtonStyle}"
-                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Scope" />
+                    Command="{x:Bind ViewModel.NetworkPage.SortByCommand}" CommandParameter="Scope" />
         </Grid>
 
         <ListView Grid.Row="4" Margin="12,0"
-                  ItemsSource="{x:Bind ViewModel.FilteredNetworks, Mode=OneWay}"
-                  SelectedItem="{x:Bind ViewModel.SelectedNetwork, Mode=TwoWay}"
+                  ItemsSource="{x:Bind ViewModel.NetworkPage.Items, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.NetworkPage.SelectedItem, Mode=TwoWay}"
                   SelectionMode="Single" Padding="0">
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
@@ -90,19 +90,19 @@
         </ListView>
 
         <StackPanel Grid.Row="2" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasNetworks), Mode=OneWay}">
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.NetworkPage.HasItems), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.NetworkPage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="暂无网络" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock Text="创建一个网络，让多个容器通过名称互相访问。" FontSize="12.5"
                            MaxWidth="380" TextWrapping="Wrap" TextAlignment="Center" Margin="0,6,0,0"
                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
-            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.NetworkPage.IsSearching), Mode=OneWay}">
                 <TextBlock Text="没有匹配的网络" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <Button Content="清除搜索" HorizontalAlignment="Center" Margin="0,12,0,0"
-                        Command="{x:Bind ViewModel.ClearSearchCommand}" />
+                        Command="{x:Bind ViewModel.NetworkPage.ClearSearchCommand}" />
             </StackPanel>
         </StackPanel>
     </Grid>
