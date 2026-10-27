@@ -24,6 +24,21 @@ public sealed partial class DetailPaneView : UserControl
         InitializeComponent();
     }
 
+    /// <summary>
+    /// 容器详情的分区切换。Tag 是四个固定字符串（Overview / Stats / Mounts / Actions），
+    /// 未知值由 VM 回落到「概览」。
+    ///
+    /// <para>
+    /// 不用双向绑定：<c>SelectorBar.SelectedItem</c> 是 <see cref="SelectorBarItem"/>
+    /// 对象而不是索引/字符串，绑到 VM 属性要么引入转换器要么让 VM 持有控件引用，
+    /// 两条都比一个事件处理器更差。
+    /// </para>
+    /// </summary>
+    private void ContainerDetailTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        ViewModel.SelectContainerDetailTab(sender.SelectedItem?.Tag as string);
+    }
+
     private async void OpenTerminal_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.SelectedContainer is null) return;

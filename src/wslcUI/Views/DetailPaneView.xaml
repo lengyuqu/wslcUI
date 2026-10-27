@@ -61,6 +61,17 @@
                             </Border>
                         </StackPanel>
 
+                        <!-- 分区切换：一长串滚动拆成四屏，每屏一件事。
+                             原先在 380px 侧栏里要滚两屏才够到「删除容器」。 -->
+                        <SelectorBar x:Name="ContainerDetailTabs" Margin="0,2,0,0"
+                                     SelectionChanged="ContainerDetailTabs_SelectionChanged">
+                            <SelectorBarItem Text="概览" Tag="Overview" IsSelected="True" />
+                            <SelectorBarItem Text="资源" Tag="Stats" />
+                            <SelectorBarItem Text="挂载" Tag="Mounts" />
+                            <SelectorBarItem Text="操作" Tag="Actions" />
+                        </SelectorBar>
+
+                        <StackPanel Spacing="8" Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailOverviewTab), Mode=OneWay}">
                         <TextBlock Text="运行信息" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <StackPanel>
@@ -110,7 +121,9 @@
                                            Text="{x:Bind ViewModel.SelectedContainer.Status, Mode=OneWay}" />
                             </Grid>
                         </StackPanel>
+                        </StackPanel>
 
+                        <StackPanel Spacing="8" Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailStatsTab), Mode=OneWay}">
                         <TextBlock Text="资源占用" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <StackPanel Visibility="{x:Bind ViewModel.SelectedContainer.HasStats, Mode=OneWay}">
@@ -164,7 +177,9 @@
                                    FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedContainer.HasStats), Mode=OneWay}" />
+                        </StackPanel>
 
+                        <StackPanel Spacing="8" Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailMountsTab), Mode=OneWay}">
                         <TextBlock Text="挂载" FontSize="11.5" FontWeight="SemiBold" Margin="0,12,0,6"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <!-- 读取中（默认） -->
@@ -194,7 +209,9 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        </StackPanel>
 
+                        <StackPanel Spacing="8" Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailActionsTab), Mode=OneWay}">
                         <StackPanel Spacing="6" Margin="0,12,0,0">
                             <Grid ColumnSpacing="6">
                                 <Grid.ColumnDefinitions>
@@ -239,6 +256,7 @@
                         </StackPanel>
                     </StackPanel>
                     <StackPanel Padding="16,14" Spacing="8">
+                        </StackPanel>
                         <TextBlock Text="未选择容器" FontSize="14"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <TextBlock Text="在左侧列表中选择一个容器，这里会显示它的属性与可执行操作。双击列表行可直接打开终端。"

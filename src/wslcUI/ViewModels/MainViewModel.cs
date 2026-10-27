@@ -538,6 +538,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// </summary>
     [ObservableProperty] public partial double DetailPaneWidth { get; set; } = 380;
 
+    // ---------------- 容器详情分区（SelectorBar Tab）----------------
+    // 详情面板原先是一长串滚动（运行信息 + 资源 + 挂载 + 操作按钮），
+    // 侧栏 380px 里要滚两屏才看得到操作按钮。分成四个 Tab 后每屏一件事。
+    // 用四个独立 bool 而不是一个枚举索引：x:Bind 不能直接比较枚举值，
+    // 加转换器反而绕；四个 bool 每个都能直接 ToVisibility。
+    [ObservableProperty] public partial bool IsDetailOverviewTab { get; set; } = true;
+    [ObservableProperty] public partial bool IsDetailStatsTab { get; set; }
+    [ObservableProperty] public partial bool IsDetailMountsTab { get; set; }
+    [ObservableProperty] public partial bool IsDetailActionsTab { get; set; }
+
+    /// <summary>
+    /// 切换容器详情的分区。<paramref name="tag"/> 来自
+    /// <c>SelectorBarItem.Tag</c>；未知值（含 null）回落到「概览」。
+    /// </summary>
+    public void SelectContainerDetailTab(string? tag)
+    {
+        IsDetailOverviewTab = tag is null or "Overview";
+        IsDetailStatsTab = tag == "Stats";
+        IsDetailMountsTab = tag == "Mounts";
+        IsDetailActionsTab = tag == "Actions";
+    }
+
     /// <summary>
     /// 详情面板是否占满主内容区（列表列收成 0）。
     ///
