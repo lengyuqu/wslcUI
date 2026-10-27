@@ -647,10 +647,10 @@ public partial class MainViewModel : ObservableObject, IDisposable, IResourceAcc
 
 
     partial void OnContainersChanged(ObservableCollection<ContainerInfo> value) => ApplyFilter();
-    partial void OnImagesChanged(ObservableCollection<ImageInfo> value) => ApplyFilter();
+    partial void OnImagesChanged(ObservableCollection<ImageInfo> value) => ImagesPage.Refresh();
     partial void OnNetworksChanged(ObservableCollection<NetworkInfo> value) => NetworkPage.Refresh();
     partial void OnVolumesChanged(ObservableCollection<VolumeInfo> value) => VolumePage.Refresh();
-    partial void OnStatsChanged(ObservableCollection<StatInfo> value) => ApplyFilter();
+    partial void OnStatsChanged(ObservableCollection<StatInfo> value) => StatsPage.Refresh();
 
 
     partial void OnSearchTextChanged(string value)
