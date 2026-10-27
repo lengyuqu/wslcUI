@@ -8,7 +8,7 @@ C# SDK 为主驱动 wslc,SDK 无投影的能力(容器列举/启停/删除/日�
 
 > **wslcUI 是 `wslc` 的原生 Windows GUI —— 补上 Docker Desktop 里 Docker 帮不上忙的那一层。**
 
-`wslc`（WSL Containers，3.0.1 GA）已经把 Docker Desktop 的**下面三层收进了操作系统**：
+`wslc`（WSL Containers，3.0.4）已经把 Docker Desktop 的**下面三层收进了操作系统**：
 独立 VM（每会话一个，含独立 VHD）、`dockerd` + `containerd` 引擎、`wslc.exe` / `container.exe` CLI。
 **唯一没有人替它做的是最上面的 Dashboard 层** —— 这正是 wslcUI 存在的理由：
 
@@ -30,7 +30,7 @@ wslcUI 的差异化在于**走 SDK + CLI 双通道**（对 SDK/CLI 命名空间�
 
 ### 对标社区同行的取舍（2026-10-02 核实）
 
-wslc 3.0.1 GA 公告点名的社区项目里有两个同构 GUI 客户端。逐条核实后的结论：
+wslc 3.0.x GA 公告点名的社区项目里有两个同构 GUI 客户端。逐条核实后的结论：
 
 | 能力 | wslcUI | 备注 |
 |------|--------|------|
@@ -59,7 +59,7 @@ wslc 3.0.1 GA 公告点名的社区项目里有两个同构 GUI 客户端。逐�
 | 语言 / 运行时 | C# · .NET 10 (net10.0-windows10.0.26100) |
 | 模式 | MVVM — CommunityToolkit.Mvvm (源生成器) |
 | 依赖注入 | Microsoft.Extensions.DependencyInjection |
-| 容器后端 | `Microsoft.WSL.Containers` 3.0.1 (wslc SDK, **GA**) + `wslc` CLI 桥接 |
+| 容器后端 | `Microsoft.WSL.Containers` 3.0.3 (wslc SDK) + `wslc` CLI 桥接（对齐 wslc 3.0.4） |
 
 ## 下载即用（预编译包）
 
@@ -67,7 +67,7 @@ wslc 3.0.1 GA 公告点名的社区项目里有两个同构 GUI 客户端。逐�
 解压到任意目录后双击 `wslcUI.exe` —— **不需要安装 .NET 运行时，也不需要安装 Windows App SDK 运行时**
 （自包含发布：.NET 10 与 Windows App SDK 2.4 都随包分发；解压后约 235 MB，zip 约 88 MB）。
 
-唯一前置：**WSL2 + `wslc` ≥ 2.9.9**（推荐 3.0.1 GA），见下方「环境前置」第 3 条。
+唯一前置：**WSL2 + `wslc` ≥ 2.9.9**（推荐 3.0.4），见下方「环境前置」第 3 条。
 
 自己构建自包含包：
 
@@ -87,11 +87,11 @@ dotnet publish src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release -r win-x64 \
 1. **Visual Studio 2026 (18.x) / 2022 17.6+**，勾选工作负载 *使用 C# 的桌面开发* 与
    *Windows App SDK* (WinUI 3)。
 2. **.NET 10 SDK**。
-3. **WSL2 + wslc 3.0.1**（GA；≥ 2.9.9 均可，2.9.11+ 与 3.0.1 表头均已兼容）：
+3. **WSL2 + wslc 3.0.4**（≥ 2.9.9 均可；2.9.11+、3.0.1 英文表头与 **3.0.4 中文表头**均已兼容）：
    ```powershell
    wsl --install --no-distribution
    wsl --update
-   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 3.0.1.0
+   & "C:\Program Files\WSL\wslc.exe" --version   # 期望 3.0.4.0
    ```
 4. WinUI 3 **unpackaged** 运行时：安装
    [Windows App SDK 2.4 运行时](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
@@ -109,10 +109,10 @@ dotnet publish src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release -r win-x64 \
 ## 已知缺口
 
 - `WslcSdkClient` 中**容器列举 / 按名启停 / 删除 / 日志 / inspect**、**网络 / 卷整套 CRUD**、**资源监控 stats**、**镜像构建**、**交互式终端**
-  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 wslc 3.0.1 的 C# 投影仍然没有 `Session.GetContainers()` /
+  均桥接 `wslc` CLI（`WslcCli.cs` / `Services/ConPty.cs`），因为 3.0.3 SDK 的 C# 投影仍然没有 `Session.GetContainers()` /
   `Session.GetContainer(name)`，且 network/volume 资源类型完全无投影、也没有 stats / 镜像构建 / inspect 端点。其余 SDK 覆盖的操作（镜像拉取 /
   运行）继续走 SDK；**镜像列举是 SDK 与 CLI 两个命名空间的合并去重**——二者互不可见，只取其一都会漏。
-- 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 3.0.1 仍不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
+- 资源监控（`wslc stats` + `WslcCli.ParseStats`，表格解析）已实现，列表为单次快照、「刷新统计」按钮独立触发。wslc 3.0.4 仍不接受 docker 的 `--no-stream` 标志——默认就是一次性快照。
   ⚠️ **必须带 `-a`**（2026-10-02 实测修正）：`wslc stats` **不带参数时只返回一个容器**，统计页此前因此永远只显示 1 行 —— 存量 bug，已改为 `stats -a`（返回全部容器，含已停止的，其值为真实的 0）。
 - **统计页实时曲线（2026-10-02 新增）**：wslc 的 stats 不流式，所以「开始采样」按钮每 3 秒轮询一次 `wslc stats -a --format json` 并自己攒历史（每容器最多 60 点）。详情面板按选中容器画 **CPU / 内存两条独立曲线**（刻意不叠在一张图里 —— 各自按本批最大值缩放，叠起来会诱使人跨曲线比高度）。曲线逻辑是纯函数 `Services/SparklineGeometry.cs`（不依赖任何 UI 类型，可单测）。离开统计页自动停采样。
 - **活动流页（2026-10-02 新增）**：`wslc events` 实时流。事件行格式
@@ -156,9 +156,15 @@ dotnet publish src/wslcUI/wslcUI.csproj -p:Platform=x64 -c Release -r win-x64 \
   ⚠️ **占用合计只覆盖镜像** —— wslc **没有** `system df` 之类的总占用命令；`wslc volume list --format json` 的 `Size` 恒为 `"N/A"`；容器大小只以 `0B (虚拟 451MB)` 这种混合形态出现在 `list -a --size`（解析脆弱，刻意不采）。因此容器/卷只显示**数量**而非体积；若某个镜像 SIZE 解析失败，合计前缀加 `≥` 明示是下界。
 - 交互式终端已实现且**已真机联调**：`wslc exec -it <name> /bin/sh`（容器内起新进程）与 `wslc attach <name>`（附加到运行中容器的现有前台进程），经 Windows Pseudoconsole（`Services/ConPty.cs`）给容器真 TTY；渲染走 **XTerm.NET（VT 解析 + cell 缓冲）+ 自研 WinUI 渲染层**（`Terminal/TerminalView.cs`，256 色 / 真彩色 / bold / inverse / CJK 双宽），选型见 [docs/TERMINAL-RENDER-DECISION.md](docs/TERMINAL-RENDER-DECISION.md)。输入侧为**真键盘转发**（`Terminal/TerminalInputMapper.cs`：KeyDown / 字符 / 粘贴直达 PTY stdin，Ctrl/Alt 组合键自合成），非 InputBox 整行发送。
   ⚠️ 开发机（Win11 26200.9278 insider）存在**机器级 ConPTY 故障**：任何 PTY 子进程 `0xC0000142` 启动即死（三重实验定责系统，与 wslcUI 无关）。开窗前的 `PseudoConsole.ProbeHealth()` 预检会拦下并弹诊断，不会开出一个黑屏死窗口。
-- SDK 与 wslc 已于 2026-09-29 同期 **GA（3.0.1）**，包版本锁在 `3.0.1` 与 runtime 对齐。
-  3.0.1 SDK 相对 2.9.9 的 winmd 差异为**纯增量、无删除**（`IProcessSettings.EnableStandardInput`、`ErrorCode.ContainerDeleted`），
-  本项目未引用二者，升包源兼容；**仍无 `compose` 命令**（官方列为最想要的待办，无时间表）。
+- **SDK 锁 `Microsoft.WSL.Containers` 3.0.3，对齐 wslc 3.0.4 CLI**（2026-10-27 升级）。
+  nuget.org 的 3.0.x 序列是 `3.0.1 → 3.0.3` —— SDK 包总是略滞后于 runtime 补丁号，3.0.x 内向后兼容。
+  3.0.3 相对 3.0.1 的 winmd 差异经字符串级比对**无公开 API 增删**（仅签名散列/时间戳变化），
+  升包源兼容；升包后全套质量门复跑通过（sln Debug 0/0、x64 Release 0/0、397 单测、verify 13 PASS / 0 FAIL / 4 NA）。
+  ⚠️ **3.0.4 CLI 的表头本地化（升级必读）**：`images` / `network ls` / `volume ls` 的表头由英文改为
+  **中文**（`存储库 / 标记 / 图像 ID / 已创建 / 大小`、`网络 ID / 名称 / 驱动程序 / 范围`、`驱动程序 / 卷名称`），
+  且实测**与 `LC_ALL` / `LANG` 无关**（恒为中文，不能靠切 locale 规避）。
+  解析器已改为**中英双语 caption 匹配**（`WslcCli.ParseImageList` / `ParseNetworkList`），两代输出都认。
+  **仍无 `compose` 命令**（官方列为最想要的待办，无时间表）。
 
 ## 验证与测试
 

@@ -60,6 +60,25 @@ public class TableParserTests
     private const string StatsRealHeaderOnlyOutput =
         "容器 ID   名称   CPU 百分比   最大用量/限制   内存百分比   网络 I/O   块 I/O   PIDS\n";
 
+    // ================= 真机夹具（wslc 3.0.4.0，2026-10-27 抓取）================
+    //
+    // 3.0.4 把 images / network ls 的表头从英文改成了**中文**
+    // （list -a / stats 本来就是中文，未变）。实测与 LC_ALL/LANG 无关 —— 恒为中文，
+    // 所以不能用「切英文 locale」规避，解析器必须双语。
+
+    /// <summary>`wslc images`（3.0.4 中文表头 + 两条数据行；列宽 12/10/14/9/尾列）</summary>
+    private const string ImagesZh304Output =
+        "存储库         标记        图像 ID         已创建      大小\n" +
+        "postgres    16        80f4c7a5e916  2 周前     451MB\n" +
+        "alpine      latest    d529dd0c6e55  2 个月前    8.42MB\n";
+
+    /// <summary>`wslc network ls`（3.0.4 中文表头 + 三条数据行；列宽 14/10/12/尾列）</summary>
+    private const string NetworkZh304Output =
+        "网络 ID       名称        驱动程序      范围\n" +
+        "5e1cf15262dd  bridge    bridge      local\n" +
+        "a108496fa403  host      host        local\n" +
+        "e4245251477d  none      null        local\n";
+
     // ================= 构造夹具（列位按内容宽度对齐）================
 
     /// <summary>stats 中文表头 + 数据行（真机表头，行为构造）</summary>
@@ -220,6 +239,19 @@ public class TableParserTests
         Assert.Empty(WslcCli.ParseNetworkList(header + row));
     }
 
+    [Fact]
+    public void ParseNetworkList_Chinese304Header_ParsesThreeRows()
+    {
+        // wslc 3.0.4 表头本地化为 网络 ID / 名称 / 驱动程序 / 范围
+        // （实测与 LC_ALL/LANG 无关，恒为中文，不能让用户切 locale 规避）。
+        var rows = WslcCli.ParseNetworkList(NetworkZh304Output);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(("bridge", "bridge", "local"), (rows[0].Name, rows[0].Driver, rows[0].Scope));
+        Assert.Equal(("host", "host", "local"), (rows[1].Name, rows[1].Driver, rows[1].Scope));
+        Assert.Equal(("none", "null", "local"), (rows[2].Name, rows[2].Driver, rows[2].Scope));
+    }
+
     // ================= 镜像 `wslc images` =================
 
     [Fact]
@@ -245,6 +277,19 @@ public class TableParserTests
         Assert.Equal("alpine", i.Repository);
         Assert.Equal("latest", i.Tag);
         Assert.Equal("8.42MB", i.Size);
+    }
+
+    [Fact]
+    public void ParseImageList_Chinese304Header_ParsesAllColumns()
+    {
+        // wslc 3.0.4 表头本地化为 存储库 / 标记 / 图像 ID / 已创建 / 大小。
+        var rows = WslcCli.ParseImageList(ImagesZh304Output);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(("postgres", "16", "80f4c7a5e916", "451MB"),
+            (rows[0].Repository, rows[0].Tag, rows[0].Id, rows[0].Size));
+        Assert.Equal(("alpine", "latest", "d529dd0c6e55", "8.42MB"),
+            (rows[1].Repository, rows[1].Tag, rows[1].Id, rows[1].Size));
     }
 
     // ================= 统计 `wslc stats` =================

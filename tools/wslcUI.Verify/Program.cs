@@ -97,15 +97,15 @@ internal static class Program
             async ct => (await WslcCli.ListContainersAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: false);
         await VerifyTable("V2.2 images   编码+解析",
-            "images", new[] { "REPOSITORY" },
+            "images", new[] { "存储库", "REPOSITORY" },
             async ct => (await WslcCli.ListImagesAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: false);
         await VerifyTable("V2.3 network ls 编码+解析",
-            "network ls", new[] { "NETWORK ID" },
+            "network ls", new[] { "网络 ID", "NETWORK ID" },
             async ct => (await WslcCli.ListNetworksAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: false);
         await VerifyTable("V2.4 volume ls 编码+解析",
-            "volume ls", new[] { "VOLUME NAME", "DRIVER" },
+            "volume ls", new[] { "卷名称", "VOLUME NAME", "驱动程序", "DRIVER" },
             async ct => (await WslcCli.ListVolumesAsync(ct)).Count,
             expectHeaderOnlyWhenEmpty: false);
         // 原始探针的参数必须与生产代码（WslcCli.GetStatsAsync）**逐字一致**，

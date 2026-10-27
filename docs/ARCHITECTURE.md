@@ -3,11 +3,11 @@
 ## 1. 为什么 API 优先,而不是封装 CLI
 
 `wslc` 同时提供了 **CLI (`wslc.exe`)** 与 **编程 SDK
-(`Microsoft.WSL.Containers`)**。WSL Containers 已于 2026-09-29 **GA（3.0.1）**，
-本仓库 SDK 锁 **3.0.1** 与 runtime 对齐。选择 SDK 直接调用,可**省掉整层「进程封装 + stdout 解析 + 重试 + 流式读取」**,
+(`Microsoft.WSL.Containers`)**。WSL Containers 已于 2026-09-29 **GA**，
+本仓库 SDK 锁 **3.0.3**（对齐 `wslc 3.0.4.0`，见第 6 节）。选择 SDK 直接调用,可**省掉整层「进程封装 + stdout 解析 + 重试 + 流式读取」**,
 且接口变更在编译期即可发现,而非运行时崩在字符串解析上。
 
-> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志 / inspect，网络 / 卷整套 CRUD，资源监控 stats，镜像构建，交互式终端）**：3.0.1 的 C# 投影**仍然没有**
+> ⚠️ **例外（容器列举 / 按名启停 / 删除 / 日志 / inspect，网络 / 卷整套 CRUD，资源监控 stats，镜像构建，交互式终端）**：3.0.3 的 C# 投影**仍然没有**
 > `Session.GetContainers()`，也**没有** `Session.GetContainer(name)`（见
 > [Known Gaps](https://wsl.dev/api-reference/csharp/known-gaps/)；且 **network / volume 资源类型完全无投影，也没有 stats 端点、没有 Dockerfile 构建投影、没有 inspect 投影**）。因此"列出所有容器 / 按名取回引用 / 删除 / 取日志 / 读挂载"、
 > 以及"网络/卷的创建、列举、删除"，还有"资源使用快照 / 镜像构建 / 交互式终端"在纯 SDK 下都做不到。这部分在 `WslcCli.cs` 里桥接
@@ -76,14 +76,14 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 | 项 | 状态 | 说明 |
 |----|------|------|
 | 镜像列举 | ✅ SDK + CLI 合并 | `Session.GetImages()`（SDK 自身命名空间）+ `wslc images`（CLI 命名空间），按镜像 ID 去重合并——两者互不可见，只取其一都会漏（详见 `WslcSdkClient.ListImagesAsync`） |
-| 容器列举 | ✅ 已用 CLI 桥接 | 3.0.1 SDK 无 `Session.GetContainers()`，改走 `wslc list -a`（`WslcCli.cs`） |
+| 容器列举 | ✅ 已用 CLI 桥接 | 3.0.3 SDK 无 `Session.GetContainers()`，改走 `wslc list -a`（`WslcCli.cs`） |
 | 启停(按名) | ✅ 已用 CLI 桥接 | SDK 无 `GetContainer(name)`，走 `wslc start/stop <name>` |
 | 删除容器 | ✅ 已用 CLI 桥接 | 走 `wslc rm <name>` |
 | 删除镜像 | ✅ 命名空间感知 | 2.9.9 起：reference 命中 `Session.GetImages()` 走 `Session.DeleteImage`，否则 `wslc image rm`（修复 SDK 镜像 UI 可见但删不掉的 bug） |
 | 容器日志 | ✅ 已用 CLI 桥接 | 走 `wslc logs <name>`（非 `-f` 跟随） |
-| 网络列举 | ✅ 已用 CLI 桥接 | 3.0.1 SDK 无 network 投影，走 `wslc network ls`（`WslcCli.ParseNetworkList`） |
+| 网络列举 | ✅ 已用 CLI 桥接 | 3.0.3 SDK 无 network 投影，走 `wslc network ls`（`WslcCli.ParseNetworkList`，**中英双语表头** —— 3.0.4 起表头为中文） |
 | 网络创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc network create/remove <name>` |
-| 卷列举 | ✅ 已用 CLI 桥接 | 3.0.1 SDK 无 volume 投影，走 `wslc volume ls --format json`（`WslcCli.ParseVolumeListJson`）。**此路径刻意不做表格回退**——Mountpoint 列只存在于 JSON 输出里 |
+| 卷列举 | ✅ 已用 CLI 桥接 | 3.0.3 SDK 无 volume 投影，走 `wslc volume ls --format json`（`WslcCli.ParseVolumeListJson`）。**此路径刻意不做表格回退**——Mountpoint 列只存在于 JSON 输出里 |
 | 卷创建/删除 | ✅ 已用 CLI 桥接 | 走 `wslc volume create/remove <name>` |
 | 资源监控 (stats) | ✅ 已用 CLI 桥接 | 走 `wslc stats -a`（`WslcCli.ParseStats`，按表头推导列宽解析；取消即杀进程安全网 + 独立 `RefreshStatsCommand`）。**必须带 `-a`** —— 不带时 wslc 只返回一个容器（2026-10-02 实测修正的存量 bug） |
 | 实时资源曲线 (sparkline) | ✅ 轮询自采样 | stats 不流式 → `MainViewModel` 用 `DispatcherQueueTimer` 每 3 秒取 `wslc stats -a --format json`（NDJSON，`ParseStatsJson`），按容器名攒最多 60 点；坐标换算见纯函数 `Services/SparklineGeometry.cs`。CPU / 内存各自独立成图（都按本批最大值缩放，叠加会误导读图） |
@@ -96,14 +96,21 @@ services.AddSingleton<IWslcClient, WslcSdkClient>();   // 或 FakeWslcClient
 
 ## 6. 版本对齐
 
-SDK 与 wslc runtime **版本已对齐**：WSL Containers 于 2026-09-29 GA（3.0.1），
-本仓库同时锁 `Microsoft.WSL.Containers` **3.0.1** 与 `wslc 3.0.1.0`。
+本仓库锁 `Microsoft.WSL.Containers` **3.0.3**，对齐本机 `wslc 3.0.4.0`
+（2026-10-27 升级；nuget.org 的 3.0.x 序列只有 `3.0.1 → 3.0.3`，
+SDK 包总略滞后于 runtime 补丁号，3.0.x 内 COM 向后兼容）。
 GA 后仍可能有破坏性变更,升级时先比对
 [wsl.dev/api-reference/csharp](https://wsl.dev/api-reference/csharp/)，并补跑第 7 节全套质量门。
 
-3.0.1 SDK 相对 2.9.9 的 winmd diff 为**纯增量、无删除**：
+3.0.1 → 3.0.3 的 winmd diff 经字符串级比对**无公开 API 增删**（仅签名散列/时间戳变化）。
+2.9.9 → 3.0.1 的 diff 为**纯增量、无删除**：
 `IProcessSettings.EnableStandardInput`（bool，对应 "Support STDIN through SDK"）
 与 `ErrorCode.ContainerDeleted`；本项目未引用二者，升包源兼容。
+
+⚠️ **wslc 3.0.4 CLI 的表头本地化**：`images` / `network ls` / `volume ls`
+的表头由英文改为**中文**，且与 `LC_ALL` / `LANG` 无关（实测恒为中文）。
+`WslcCli.ParseImageList` / `ParseNetworkList` 已改为**中英双语 caption 匹配**。
+`list -a` / `stats` 表头未变。
 
 ## 7. 质量门与验证
 

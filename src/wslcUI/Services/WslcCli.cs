@@ -39,7 +39,7 @@ namespace wslcUI.Services;
 ///
 /// <para>
 /// <b>Why we never use <c>--format json</c></b>: wslc advertises a JSON
-/// format flag, but the shape is inconsistent per command (observed on 2.9.9:
+/// format flag, but the shape was inconsistent per command (observed on 2.9.9:
 /// list/images/stats emit a single object, network emits NDJSON, some emit
 /// none at all). Going through JSON added path branches that silently returned
 /// empty lists. Table output is uniform: a single header line followed by
@@ -47,6 +47,14 @@ namespace wslcUI.Services;
 /// boundaries (<see cref="SplitByColumns"/>), which round-trips for both the
 /// Chinese-locale headers (<c>容器 ID / 名称 / 映像 / …</c>) and the English
 /// headers (<c>NETWORK ID / NAME / DRIVER / SCOPE</c>).
+/// </para>
+/// <para>
+/// <b>3.0.4 起两件事变了</b>：① <c>images</c> / <c>network ls</c> / <c>volume ls</c>
+/// 的表头由英文改为中文（<c>存储库 / 标记 / 图像 ID</c>、<c>网络 ID / 名称 / 驱动程序 / 范围</c>），
+/// 且与 <c>LC_ALL</c>/<c>LANG</c> 无关 —— 因此各 <c>Parse*</c> 的 caption 表必须是
+/// <b>中英双语</b>（先中文再英文回退）；② 所有列表命令的 <c>--format json</c>
+/// 已统一为 NDJSON，JSON 路径理论上可行，但本仓库仍坚持表格解析（夹具与 verify
+/// 探针都建立在表格形态上，收益不抵重构风险）。
 /// </para>
 /// </summary>
 internal static class WslcCli
@@ -1723,8 +1731,10 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// Parses <c>wslc network ls</c> output. Real header on wslc 2.9.9.0:
-    /// <c>NETWORK ID   NAME      DRIVER      SCOPE</c>
+    /// Parses <c>wslc network ls</c> output. Header shapes observed:
+    /// 2.9.9/3.0.1 <c>NETWORK ID   NAME      DRIVER      SCOPE</c>；
+    /// <b>3.0.4 起表头本地化为 <c>网络 ID   名称   驱动程序   范围</c></b>
+    /// （实测与 LC_ALL/LANG 无关，始终中文）。两种形状都按 caption 定位。
     /// </summary>
     internal static IReadOnlyList<NetworkInfo> ParseNetworkList(string output)
     {
@@ -1732,12 +1742,15 @@ internal static class WslcCli
         var (headerLine, boundaries, headerIdx) = LocateHeader(output);
         if (headerLine is null) return result;
 
-        var nameIdx = FindColumn(boundaries, headerLine, "NAME");
-        var driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
-        var scopeIdx = FindColumn(boundaries, headerLine, "SCOPE");
+        var nameIdx = FindColumn(boundaries, headerLine, "名称");
+        if (nameIdx < 0) nameIdx = FindColumn(boundaries, headerLine, "NAME");
+        var driverIdx = FindColumn(boundaries, headerLine, "驱动程序");
+        if (driverIdx < 0) driverIdx = FindColumn(boundaries, headerLine, "DRIVER");
+        var scopeIdx = FindColumn(boundaries, headerLine, "范围");
+        if (scopeIdx < 0) scopeIdx = FindColumn(boundaries, headerLine, "SCOPE");
         if (nameIdx < 0)
         {
-            TraceUnrecognisedTable("wslc network ls", headerLine, "NAME");
+            TraceUnrecognisedTable("wslc network ls", headerLine, "名称/NAME");
             return result;
         }
 
@@ -1956,12 +1969,12 @@ internal static class WslcCli
     }
 
     /// <summary>
-    /// Parses <c>wslc images</c> output. Real header on wslc 2.9.9.0:
-    /// <c>REPOSITORY   TAG   IMAGE ID   CREATED   SIZE</c>. SIZE is the
-    /// truncated form (column padding clips the unit at ~5 chars; e.g.
-    /// "4.45" instead of "4.45MB"); if exact bytes are needed, call
-    /// <c>wslc inspect &lt;id&gt;</c> per image. The CLI's
-    /// <c>--format json</c> is not used here (see class doc).
+    /// Parses <c>wslc images</c> output. Header shapes observed:
+    /// 2.9.9/3.0.1 <c>REPOSITORY   TAG   IMAGE ID   CREATED   SIZE</c>；
+    /// <b>3.0.4 起表头本地化为 <c>存储库   标记   图像 ID   已创建   大小</c></b>。
+    /// SIZE 仍是截断形态（列宽裁剪单位；需要精确字节请对单镜像
+    /// <c>wslc inspect &lt;id&gt;</c>）。注意 3.0.4 的 JSON 形态已统一为 NDJSON，
+    /// 但本仓库仍走表格解析（见 class doc 的 JSON 不可靠说明）。
     /// </summary>
     internal static IReadOnlyList<ImageInfo> ParseImageList(string output)
     {
@@ -1969,13 +1982,18 @@ internal static class WslcCli
         var (headerLine, boundaries, headerIdx) = LocateHeader(output);
         if (headerLine is null) return result;
 
-        var repoIdx = FindColumn(boundaries, headerLine, "REPOSITORY");
-        var tagIdx = FindColumn(boundaries, headerLine, "TAG");
-        var idIdx = FindColumn(boundaries, headerLine, "IMAGE ID");
-        var sizeIdx = FindColumn(boundaries, headerLine, "SIZE");
+        var repoIdx = FindColumn(boundaries, headerLine, "存储库");
+        if (repoIdx < 0) repoIdx = FindColumn(boundaries, headerLine, "REPOSITORY");
+        var tagIdx = FindColumn(boundaries, headerLine, "标记");
+        if (tagIdx < 0) tagIdx = FindColumn(boundaries, headerLine, "TAG");
+        var idIdx = FindColumn(boundaries, headerLine, "图像 ID");
+        if (idIdx < 0) idIdx = FindColumn(boundaries, headerLine, "IMAGE ID");
+        var sizeIdx = FindColumn(boundaries, headerLine, "大小");
+        if (sizeIdx < 0) sizeIdx = FindColumn(boundaries, headerLine, "SIZE");
         if (repoIdx < 0 || tagIdx < 0 || idIdx < 0)
         {
-            TraceUnrecognisedTable("wslc images", headerLine, "REPOSITORY", "TAG", "IMAGE ID");
+            TraceUnrecognisedTable("wslc images", headerLine,
+                "存储库/REPOSITORY", "标记/TAG", "图像 ID/IMAGE ID");
             return result;
         }
 
