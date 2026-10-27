@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="wslcUI.Views.EndpointsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:wslcUI.Models"
+    xmlns:conv="using:wslcUI.Converters"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- 端点页。可见性由自身绑定决定，MainWindow 只负责摆放。 -->
+    <Grid Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsEndpointsPage), Mode=OneWay}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Padding="12,8" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="端点" FontSize="15" FontWeight="SemiBold"
+                       VerticalAlignment="Center" Margin="0,0,12,0" />
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12.5" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="所有运行中容器已发布到宿主的端口。绑定 0.0.0.0 的端点局域网内也可访问。" />
+            <Button Grid.Column="2" Content="刷新" MinWidth="88"
+                    Command="{x:Bind ViewModel.RefreshCommand}" />
+        </Grid>
+
+        <Grid Grid.Row="1" Padding="12,0,12,8" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
+                <TextBlock Text="已发布端口" FontSize="12.5" VerticalAlignment="Center" />
+            </Border>
+            <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}" MinWidth="96">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                           FontSize="12.5" Text="{x:Bind ViewModel.EndpointCountText, Mode=OneWay}" />
+            </Border>
+        </Grid>
+
+        <StackPanel Grid.Row="2" Padding="12,0,12,4">
+            <InfoBar IsOpen="{x:Bind ViewModel.HasNonLoopbackEndpoint, Mode=OneWay}"
+                     Severity="Warning" IsClosable="False"
+                     Title="{x:Bind ViewModel.NonLoopbackHint, Mode=OneWay}" />
+        </StackPanel>
+
+        <Grid Grid.Row="3">
+            <ListView ItemsSource="{x:Bind ViewModel.Endpoints, Mode=OneWay}"
+                      SelectionMode="None" Padding="0">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:EndpointInfo">
+                        <Grid Padding="8,6" ColumnSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.3*" />
+                                <ColumnDefinition Width="1.1*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{x:Bind ContainerName, Mode=OneTime}" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind HostIp, Mode=OneTime}" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind Summary, Mode=OneTime}" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Button Grid.Column="3" Content="复制" Margin="0,0,6,0" MinWidth="66"
+                                    Click="CopyEndpoint_Click" />
+                            <Button Grid.Column="4" Content="打开" MinWidth="66"
+                                    Click="OpenEndpoint_Click" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <TextBlock Text="还没有已发布的端口。用 -p 宿主端口:容器端口 启动容器后会出现在这里。"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasEndpoints), Mode=OneWay}" />
+        </Grid>
+    </Grid>
+</UserControl>

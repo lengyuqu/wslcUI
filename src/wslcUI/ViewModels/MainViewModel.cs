@@ -672,6 +672,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// 所以进概览页时强制收起；离开时按用户原开关恢复。
     /// </summary>
     [ObservableProperty] public partial bool IsDetailPaneVisible { get; set; } = true;
+
+    /// <summary>
+    /// 详情面板宽度。原先是硬编码 340 —— 键值行稍微长一点就换行，
+    /// inspect 原文更是挤成一团。默认放宽到 380，「宽」按钮可切到 520。
+    /// </summary>
+    [ObservableProperty] public partial double DetailPaneWidth { get; set; } = 380;
     [ObservableProperty] public partial string LogTarget { get; set; } = "";
     [ObservableProperty] public partial ElementTheme Theme { get; set; } = ElementTheme.Default;
 
@@ -1169,6 +1175,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void ToggleDetail() => IsDetailOpen = !IsDetailOpen;
+
+    /// <summary>详情面板宽度在 380 / 520 之间切换（窄档看列表，宽档读 inspect / 挂载）。</summary>
+    [RelayCommand]
+    private void ToggleDetailWidth() =>
+        DetailPaneWidth = DetailPaneWidth < 500 ? 520 : 380;
     [RelayCommand]
     private void ToggleTheme() =>
         Theme = Theme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;

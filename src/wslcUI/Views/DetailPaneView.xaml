@@ -1,0 +1,540 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="wslcUI.Views.DetailPaneView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:wslcUI.Models"
+    xmlns:conv="using:wslcUI.Converters"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- 右侧详情面板：按当前页切换内容（容器 / 镜像 / 网络 / 卷 / 统计 / 构建）。
+         宽度绑 ViewModel.DetailPaneWidth，顶栏「宽」按钮在 380 / 520 之间切换。
+         显隐由 IsDetailPaneVisible 控制（= 用户开关 && 当前页有详情）。 -->
+    <Border Width="{x:Bind ViewModel.DetailPaneWidth, Mode=OneWay}"
+            Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsDetailPaneVisible), Mode=OneWay}"
+            Background="{ThemeResource LayerFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,0,0,0">
+        <ScrollViewer>
+            <StackPanel>
+                <!-- 容器详情 -->
+                <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsContainersPage), Mode=OneWay}">
+                    <StackPanel Padding="16,14" Spacing="10"
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedContainer), Mode=OneWay}">
+                        <TextBlock Text="容器 · 详情" FontSize="11.5"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedContainer.Name, Mode=OneWay}"
+                                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Border CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                    Background="{ThemeResource StatusRunningBg}" BorderBrush="{ThemeResource StatusRunningBd}"
+                                    Visibility="{x:Bind ViewModel.SelectedContainer.IsRunning, Mode=OneWay}">
+                                <TextBlock Text="运行中" FontSize="11.5" Foreground="{ThemeResource StatusRunningFg}" />
+                            </Border>
+                            <Border CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                    Background="{ThemeResource StatusStoppedBg}" BorderBrush="{ThemeResource StatusStoppedBd}"
+                                    Visibility="{x:Bind ViewModel.SelectedContainer.IsStopped, Mode=OneWay}">
+                                <TextBlock Text="已停止" FontSize="11.5" Foreground="{ThemeResource StatusStoppedFg}" />
+                            </Border>
+                            <Border CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                    Background="{ThemeResource StatusErrorBg}" BorderBrush="{ThemeResource StatusErrorBd}"
+                                    Visibility="{x:Bind ViewModel.SelectedContainer.IsError, Mode=OneWay}">
+                                <TextBlock Text="异常退出" FontSize="11.5" Foreground="{ThemeResource StatusErrorFg}" />
+                            </Border>
+                        </StackPanel>
+
+                        <TextBlock Text="运行信息" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="镜像" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Image, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="端口" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Ports, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="创建" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedContainer.CreatedAt, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="容器 ID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Id, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="状态原文" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Status, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+
+                        <TextBlock Text="资源占用" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Visibility="{x:Bind ViewModel.SelectedContainer.HasStats, Mode=OneWay}">
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="CPU" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Cpu, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="内存" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Mem, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="内存百分比" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.MemPercent, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="网络 I/O" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.NetIo, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="PID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedContainer.Pids, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+                        <TextBlock Text="未采集到资源快照。到「统计」页点一次「刷新快照」，这里会显示 CPU 与内存。"
+                                   FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedContainer.HasStats), Mode=OneWay}" />
+
+                        <TextBlock Text="挂载" FontSize="11.5" FontWeight="SemiBold" Margin="0,12,0,6"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <!-- 读取中（默认） -->
+                        <TextBlock Text="读取中…"
+                                   FontSize="12" Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   Visibility="{x:Bind ViewModel.SelectedContainer.IsMountLoading, Mode=OneWay}" />
+                        <!-- 已查无挂载 -->
+                        <TextBlock Text="未挂载任何数据卷 / 目录。"
+                                   FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   Visibility="{x:Bind ViewModel.SelectedContainer.IsMountEmpty, Mode=OneWay}" />
+                        <!-- 有挂载：list 显示 src/rw → dest -->
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedContainer.Mounts, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.SelectedContainer.HasMounts, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ContainerMount">
+                                    <Grid Style="{StaticResource KvRowStyle}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock HorizontalAlignment="Right"
+                                                   FontFamily="Consolas" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Text="{x:Bind Display, Mode=OneTime}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <StackPanel Spacing="6" Margin="0,12,0,0">
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="启动" HorizontalAlignment="Stretch"
+                                        Command="{x:Bind ViewModel.StartCommand}"
+                                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                                <Button Content="重启" HorizontalAlignment="Stretch"
+                                        Command="{x:Bind ViewModel.RestartCommand}"
+                                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                                <Button Grid.Column="2" Content="停止" HorizontalAlignment="Stretch"
+                                        Command="{x:Bind ViewModel.StopCommand}"
+                                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                            </Grid>
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="查看日志" HorizontalAlignment="Stretch"
+                                        Command="{x:Bind ViewModel.ShowLogsCommand}"
+                                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                                <Button Content="打开终端" HorizontalAlignment="Stretch"
+                                        Click="OpenTerminal_Click"
+                                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                            </Grid>
+                            <Button Content="附加到容器"
+                                    HorizontalAlignment="Stretch"
+                                    Click="Attach_Click"
+                                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.CanAttachContainer), Mode=OneWay}" />
+                            <Button Content="浏览文件"
+                                    HorizontalAlignment="Stretch"
+                                    Click="OpenFiles_Click"
+                                    Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.CanAttachContainer), Mode=OneWay}" />
+                            <Button Content="删除容器" HorizontalAlignment="Stretch"
+                                    Command="{x:Bind ViewModel.DeleteContainerCommand}"
+                                    IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}"
+                                    Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Padding="16,14" Spacing="8">
+                        <TextBlock Text="未选择容器" FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="在左侧列表中选择一个容器，这里会显示它的属性与可执行操作。双击列表行可直接打开终端。"
+                                   FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 镜像详情 -->
+                <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsImagesPage), Mode=OneWay}">
+                    <StackPanel Padding="16,14" Spacing="10"
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedImage), Mode=OneWay}">
+                        <TextBlock Text="镜像 · 详情" FontSize="11.5"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedImage.Reference, Mode=OneWay}"
+                                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <StackPanel>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="仓库" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedImage.Repository, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="标签" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedImage.Tag, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="大小" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedImage.Size, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="摘要" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedImage.DigestDisplay, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="镜像 ID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedImage.Id, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+                        <Button Content="删除镜像" HorizontalAlignment="Stretch" Margin="0,12,0,0"
+                                Command="{x:Bind ViewModel.DeleteImageCommand}"
+                                IsEnabled="{x:Bind ViewModel.CanActOnImage, Mode=OneWay}"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                    </StackPanel>
+                    <StackPanel Padding="16,14" Spacing="8">
+                        <TextBlock Text="未选择镜像" FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="选中一个镜像后，这里显示标签、摘要与删除操作。"
+                                   FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 网络详情 -->
+                <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsNetworksPage), Mode=OneWay}">
+                    <StackPanel Padding="16,14" Spacing="10"
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedNetwork), Mode=OneWay}">
+                        <TextBlock Text="网络 · 详情" FontSize="11.5"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedNetwork.Name, Mode=OneWay}"
+                                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <StackPanel>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="驱动" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedNetwork.Driver, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="作用域" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedNetwork.Scope, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+                        <Button Content="删除网络" HorizontalAlignment="Stretch" Margin="0,12,0,0"
+                                Command="{x:Bind ViewModel.RemoveNetworkCommand}"
+                                IsEnabled="{x:Bind ViewModel.CanActOnNetwork, Mode=OneWay}"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                    </StackPanel>
+                    <StackPanel Padding="16,14" Spacing="8">
+                        <TextBlock Text="未选择网络" FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="选中一个网络后，这里显示驱动、作用域与删除操作。"
+                                   FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 卷详情 -->
+                <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsVolumesPage), Mode=OneWay}">
+                    <StackPanel Padding="16,14" Spacing="10"
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedVolume), Mode=OneWay}">
+                        <TextBlock Text="卷 · 详情" FontSize="11.5"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedVolume.Name, Mode=OneWay}"
+                                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                        <StackPanel>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="驱动" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right"
+                                           Text="{x:Bind ViewModel.SelectedVolume.Driver, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="挂载点" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedVolume.Mountpoint, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+
+                        <TextBlock Text="被以下容器使用" FontSize="11.5" FontWeight="SemiBold" Margin="0,6,0,0"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.SelectedVolume.UsedBy, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.SelectedVolume.HasUsedBy, Mode=OneWay}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <Grid Padding="0,2" ColumnSpacing="6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="•" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind}" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Text="暂无已查看的容器引用此卷。"
+                                   FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.SelectedVolume.HasUsedBy), Mode=OneWay}" />
+                        <TextBlock Text="{x:Bind ViewModel.UninspectedForVolumeHint, Mode=OneWay}"
+                                   FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                        <Button Content="删除卷" HorizontalAlignment="Stretch" Margin="0,12,0,0"
+                                Command="{x:Bind ViewModel.RemoveVolumeCommand}"
+                                IsEnabled="{x:Bind ViewModel.CanActOnVolume, Mode=OneWay}"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                    </StackPanel>
+                    <StackPanel Padding="16,14" Spacing="8">
+                        <TextBlock Text="未选择卷" FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="选中一个卷后，这里显示挂载点与删除操作。"
+                                   FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 统计详情 -->
+                <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsStatsPage), Mode=OneWay}">
+                    <StackPanel Padding="16,14" Spacing="10"
+                                Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.HasSelectedStat), Mode=OneWay}">
+                        <TextBlock Text="资源快照 · 详情" FontSize="11.5"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedStat.Container, Mode=OneWay}"
+                                   FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+                        <!-- 实时曲线：CPU 与内存各自独立成图。刻意不叠在一张图里 ——
+                             各自按本批最大值缩放，叠起来会诱使人跨曲线比高度（无意义）。 -->
+                        <StackPanel Spacing="6">
+                            <TextBlock FontSize="11.5"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                <Run Text="实时曲线 · " /><Run Text="{x:Bind ViewModel.SparkTargetName, Mode=OneWay}" />
+                            </TextBlock>
+
+                            <TextBlock Text="CPU" FontSize="11"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            <Border Height="44" CornerRadius="6"
+                                    Background="{ThemeResource LogPaneBg}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                <Polyline Margin="0,4" VerticalAlignment="Center"
+                                          Points="{x:Bind ViewModel.CpuSparkPoints, Mode=OneWay}"
+                                          Stroke="{ThemeResource AccentFillColorDefaultBrush}"
+                                          StrokeThickness="1.5" />
+                            </Border>
+
+                            <TextBlock Text="内存" FontSize="11"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            <Border Height="44" CornerRadius="6"
+                                    Background="{ThemeResource LogPaneBg}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                <Polyline Margin="0,4" VerticalAlignment="Center"
+                                          Points="{x:Bind ViewModel.MemSparkPoints, Mode=OneWay}"
+                                          Stroke="{ThemeResource SystemFillColorSuccessBrush}"
+                                          StrokeThickness="1.5" />
+                            </Border>
+
+                            <TextBlock FontSize="11" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                       Text="{x:Bind ViewModel.SparkSummary, Mode=OneWay}" />
+                        </StackPanel>
+
+                        <StackPanel>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="CPU" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedStat.Cpu, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="内存 / 限制" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedStat.Mem, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="内存百分比" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedStat.MemPercent, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="网络 I/O" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedStat.NetIo, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="块 I/O" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" TextTrimming="CharacterEllipsis"
+                                           Text="{x:Bind ViewModel.SelectedStat.BlockIo, Mode=OneWay}" />
+                            </Grid>
+                            <Grid Style="{StaticResource KvRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="PID" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"
+                                           Text="{x:Bind ViewModel.SelectedStat.Pids, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+                        <Button Content="去容器页看该容器" HorizontalAlignment="Stretch" Margin="0,12,0,0"
+                                Command="{x:Bind ViewModel.NavigateCommand}" CommandParameter="Containers" />
+                    </StackPanel>
+                    <StackPanel Padding="16,14" Spacing="8">
+                        <TextBlock Text="未选择容器" FontSize="14"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="选中一行快照后，这里显示该容器的完整资源占用。"
+                                   FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- 构建详情 -->
+                <StackPanel Padding="16,14" Spacing="10"
+                            Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsBuildPage), Mode=OneWay}">
+                    <TextBlock Text="构建 · 说明" FontSize="11.5"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="从 Dockerfile 构建镜像" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="等价于 wslc build -t &lt;标签&gt; &lt;上下文&gt;。构建期间输出实时追加到左侧终端；再次点击「开始构建」会取消上一次未完成的构建。"
+                               FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Text="上下文目录必须包含 Dockerfile 或 Containerfile，否则直接报错，不会启动构建。"
+                               FontSize="12.5" TextWrapping="Wrap" LineHeight="20"
+                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

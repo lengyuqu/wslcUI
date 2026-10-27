@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="wslcUI.Views.ContainersView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:wslcUI.Models"
+    xmlns:conv="using:wslcUI.Converters"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- 容器页。可见性由自身绑定 IsContainersPage 决定，MainWindow 只负责摆放。 -->
+    <Grid Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsContainersPage), Mode=OneWay}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Padding="12,8" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="容器" FontSize="15" FontWeight="SemiBold"
+                       VerticalAlignment="Center" Margin="0,0,12,0" />
+            <TextBox Grid.Column="1" PlaceholderText="搜索名称 / 镜像 / 端口…" VerticalAlignment="Center"
+                     Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                <Button Content="启动" Command="{x:Bind ViewModel.StartCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="重启" Command="{x:Bind ViewModel.RestartCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="停止" Command="{x:Bind ViewModel.StopCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="日志" Command="{x:Bind ViewModel.ShowLogsCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="终端" Click="OpenTerminal_Click"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="文件" Click="OpenFiles_Click"
+                        IsEnabled="{x:Bind ViewModel.CanAttachContainer, Mode=OneWay}" />
+                <Button Content="导出" Command="{x:Bind ViewModel.ExportContainerCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+                <Button Content="强杀" Command="{x:Bind ViewModel.KillContainerCommand}"
+                        IsEnabled="{x:Bind ViewModel.CanActOnContainer, Mode=OneWay}" />
+            </StackPanel>
+            <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <TextBlock FontSize="12" VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                    <Run Text="排序 " /><Run Text="{x:Bind ViewModel.SortSummary, Mode=OneWay}" />
+                </TextBlock>
+                <Button Content="多选" Click="ToggleSelectMode_Click"
+                        Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSelectMode), Mode=OneWay}" />
+                <Button Content="刷新" Command="{x:Bind ViewModel.RefreshCommand}">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F5" />
+                    </Button.KeyboardAccelerators>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- 批量操作条：仅 Select 模式可见 -->
+        <Grid Grid.Row="1" Padding="12,6"
+              Background="{ThemeResource SystemFillColorNeutralBackgroundBrush}"
+              ColumnSpacing="8"
+              Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSelectMode), Mode=OneWay}">                                <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Content="退出多选" Click="ToggleSelectMode_Click" />
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12.5">
+                <Run Text="已选 " /><Run Text="{x:Bind ViewModel.SelectedCountText, Mode=OneWay}" /><Run Text=" 项" />
+            </TextBlock>
+            <Button Grid.Column="2" Content="全选本页" Click="SelectAllVisible_Click"
+                    IsEnabled="{x:Bind ViewModel.IsSelectMode, Mode=OneWay}" />
+            <Button Grid.Column="3" Content="启动" Command="{x:Bind ViewModel.BulkStartCommand}"
+                    IsEnabled="{x:Bind ViewModel.CanBulkStart, Mode=OneWay}" />
+            <Button Grid.Column="4" Content="停止" Command="{x:Bind ViewModel.BulkStopCommand}"
+                    IsEnabled="{x:Bind ViewModel.CanBulkStop, Mode=OneWay}" />
+            <Button Grid.Column="5" Content="删除" Command="{x:Bind ViewModel.BulkDeleteCommand}"
+                    IsEnabled="{x:Bind ViewModel.CanBulkDelete, Mode=OneWay}" />
+        </Grid>
+
+        <Grid Grid.Row="2" Padding="8,6" Margin="12,0"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.3*" />
+                <ColumnDefinition Width="1.6*" />
+                <ColumnDefinition Width="100" />
+                <ColumnDefinition Width="1.1*" />
+                <ColumnDefinition Width="92" />
+                <ColumnDefinition Width="92" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Content="名称" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Name" />
+            <Button Grid.Column="1" Content="镜像" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Image" />
+            <Button Grid.Column="2" Content="状态" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Status" />
+            <Button Grid.Column="3" Content="端口" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Ports" />
+            <Button Grid.Column="4" Content="卷" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="MountListCell" />
+            <Button Grid.Column="5" Content="CPU" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="Cpu" />
+            <Button Grid.Column="6" Content="创建" Style="{StaticResource HeaderButtonStyle}"
+                    Command="{x:Bind ViewModel.SortByCommand}" CommandParameter="CreatedAt" />
+        </Grid>
+
+        <!-- SelectionMode 由多选开关切换：Single 时行为与从前完全一致
+             （详情面板靠 SelectedItem 单选），Multiple 时用于批量操作。
+             切换放在 SelectionChanged 回调里做，避免双向绑定互相触发。 -->
+        <ListView x:Name="ContainersList" Grid.Row="3" Margin="12,0"
+                  ItemsSource="{x:Bind ViewModel.FilteredContainers, Mode=OneWay}"
+                  SelectedItem="{x:Bind ViewModel.SelectedContainer, Mode=TwoWay}"
+                  SelectionMode="Single" Padding="0"
+                  SelectionChanged="ContainersList_SelectionChanged"
+                  DoubleTapped="ContainersList_DoubleTapped">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="MinHeight" Value="0" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="models:ContainerInfo">
+                    <Grid Padding="8,6" ColumnSpacing="4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.3*" />
+                            <ColumnDefinition Width="1.6*" />
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="1.1*" />
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="92" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{x:Bind Name}" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <!-- 镜像在 col 1，与表头「镜像」按钮同列（曾误写成 col 0，
+                             于是与名称叠在同一格、镜像整列空白）。 -->
+                        <TextBlock Grid.Column="1" Text="{x:Bind Image, Mode=OneWay}" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+                        <Border Grid.Column="2" CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                Background="{ThemeResource StatusRunningBg}" BorderBrush="{ThemeResource StatusRunningBd}"
+                                Visibility="{x:Bind IsRunning, Mode=OneWay}">
+                            <TextBlock Text="运行中" FontSize="11.5" Foreground="{ThemeResource StatusRunningFg}" />
+                        </Border>
+                        <Border Grid.Column="2" CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                Background="{ThemeResource StatusStoppedBg}" BorderBrush="{ThemeResource StatusStoppedBd}"
+                                Visibility="{x:Bind IsStopped, Mode=OneWay}">
+                            <TextBlock Text="已停止" FontSize="11.5" Foreground="{ThemeResource StatusStoppedFg}" />
+                        </Border>
+                        <Border Grid.Column="2" CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                Background="{ThemeResource StatusErrorBg}" BorderBrush="{ThemeResource StatusErrorBd}"
+                                Visibility="{x:Bind IsError, Mode=OneWay}">
+                            <TextBlock Text="异常退出" FontSize="11.5" Foreground="{ThemeResource StatusErrorFg}" />
+                        </Border>
+                        <Border Grid.Column="2" CornerRadius="9" Padding="8,2" BorderThickness="1"
+                                HorizontalAlignment="Left" VerticalAlignment="Center"
+                                Background="{ThemeResource StatusStoppedBg}" BorderBrush="{ThemeResource StatusStoppedBd}"
+                                Visibility="{x:Bind IsUnknownStatus, Mode=OneWay}">
+                            <TextBlock Text="{x:Bind StatusLabel, Mode=OneWay}" FontSize="11.5"
+                                       Foreground="{ThemeResource StatusStoppedFg}" />
+                        </Border>
+
+                        <TextBlock Grid.Column="3" Text="{x:Bind Ports, Mode=OneWay}" FontSize="12" FontFamily="Consolas"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="4" Text="{x:Bind MountListCell, Mode=OneWay}" FontSize="12" FontFamily="Consolas"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   ToolTipService.ToolTip="{x:Bind MountsKvCell, Mode=OneWay}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <TextBlock Text="{x:Bind Cpu, Mode=OneWay}" FontSize="12" FontFamily="Consolas" MinWidth="38" />
+                            <ProgressBar Width="44" Height="4" MinWidth="0" Maximum="100"
+                                         Value="{x:Bind CpuValue, Mode=OneWay}"
+                                         Visibility="{x:Bind HasStats, Mode=OneWay}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="6" Text="{x:Bind CreatedAt, Mode=OneWay}" FontSize="12"
+                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <StackPanel Grid.Row="3" Spacing="8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasContainers), Mode=OneWay}">
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+                <TextBlock Text="还没有容器" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="先到「镜像」页拉取一个镜像，或从命令行创建容器后刷新。"
+                           FontSize="12.5" MaxWidth="380" TextWrapping="Wrap" TextAlignment="Center"
+                           Margin="0,6,0,12"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <Button Content="去拉取镜像" HorizontalAlignment="Center"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Command="{x:Bind ViewModel.NavigateCommand}" CommandParameter="Images" />
+            </StackPanel>
+            <StackPanel Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsSearching), Mode=OneWay}">
+                <TextBlock Text="没有匹配的容器" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="换个关键词，或清除搜索查看全部。" FontSize="12.5" TextAlignment="Center"
+                           Margin="0,6,0,12"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                <Button Content="清除搜索" HorizontalAlignment="Center"
+                        Command="{x:Bind ViewModel.ClearSearchCommand}" />
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</UserControl>
