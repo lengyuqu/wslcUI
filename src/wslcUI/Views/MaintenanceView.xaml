@@ -45,7 +45,7 @@
                 <StackPanel>
                     <TextBlock Text="镜像总占用" FontSize="11.5"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{x:Bind ViewModel.ImageTotalSizeText, Mode=OneWay}"
+                    <TextBlock Text="{x:Bind ViewModel.Maintenance.ImageTotalSizeText, Mode=OneWay}"
                                FontSize="22" FontWeight="SemiBold" />
                 </StackPanel>
             </Border>
@@ -53,7 +53,7 @@
                 <StackPanel>
                     <TextBlock Text="镜像数量" FontSize="11.5"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{x:Bind ViewModel.ImageCountText, Mode=OneWay}"
+                    <TextBlock Text="{x:Bind ViewModel.Maintenance.ImageCountText, Mode=OneWay}"
                                FontSize="22" FontWeight="SemiBold" />
                 </StackPanel>
             </Border>
@@ -61,7 +61,7 @@
                 <StackPanel>
                     <TextBlock Text="可清理容器" FontSize="11.5"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{x:Bind ViewModel.ReclaimableContainersText, Mode=OneWay}"
+                    <TextBlock Text="{x:Bind ViewModel.Maintenance.ReclaimableContainersText, Mode=OneWay}"
                                FontSize="22" FontWeight="SemiBold" />
                 </StackPanel>
             </Border>
@@ -69,7 +69,7 @@
                 <StackPanel>
                     <TextBlock Text="网络 / 卷" FontSize="11.5"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="{x:Bind ViewModel.NetworkVolumeCountText, Mode=OneWay}"
+                    <TextBlock Text="{x:Bind ViewModel.Maintenance.NetworkVolumeCountText, Mode=OneWay}"
                                FontSize="22" FontWeight="SemiBold" />
                 </StackPanel>
             </Border>
@@ -89,10 +89,10 @@
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12.5" MinWidth="28"
                            HorizontalAlignment="Right" Margin="0,0,10,0"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="{x:Bind ViewModel.ReclaimableContainersText, Mode=OneWay}" />
+                           Text="{x:Bind ViewModel.Maintenance.ReclaimableContainersText, Mode=OneWay}" />
                 <Button Grid.Column="2" Content="清理容器" MinWidth="96"
-                        Command="{x:Bind ViewModel.PruneContainersCommand}"
-                        IsEnabled="{x:Bind ViewModel.CanPrune, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.Maintenance.PruneContainersCommand}"
+                        IsEnabled="{x:Bind ViewModel.Maintenance.CanPrune, Mode=OneWay}" />
             </Grid>
 
             <Grid ColumnSpacing="8">
@@ -107,8 +107,8 @@
                            HorizontalAlignment="Right" Margin="0,0,10,0"
                            Text="" />
                 <Button Grid.Column="2" Content="清理悬空" MinWidth="96"
-                        Command="{x:Bind ViewModel.PruneDanglingImagesCommand}"
-                        IsEnabled="{x:Bind ViewModel.CanPrune, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.Maintenance.PruneDanglingImagesCommand}"
+                        IsEnabled="{x:Bind ViewModel.Maintenance.CanPrune, Mode=OneWay}" />
             </Grid>
 
             <Grid ColumnSpacing="8">
@@ -122,10 +122,10 @@
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="12.5" MinWidth="28"
                            HorizontalAlignment="Right" Margin="0,0,10,0"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           Text="{x:Bind ViewModel.ImageCountText, Mode=OneWay}" />
+                           Text="{x:Bind ViewModel.Maintenance.ImageCountText, Mode=OneWay}" />
                 <Button Grid.Column="2" Content="清理全部镜像" MinWidth="96"
-                        Command="{x:Bind ViewModel.PruneUnusedImagesCommand}"
-                        IsEnabled="{x:Bind ViewModel.CanPrune, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.Maintenance.PruneUnusedImagesCommand}"
+                        IsEnabled="{x:Bind ViewModel.Maintenance.CanPrune, Mode=OneWay}" />
             </Grid>
 
             <Grid ColumnSpacing="8">
@@ -140,8 +140,8 @@
                            HorizontalAlignment="Right" Margin="0,0,10,0"
                            Text="" />
                 <Button Grid.Column="2" Content="清理网络" MinWidth="96"
-                        Command="{x:Bind ViewModel.PruneNetworksCommand}"
-                        IsEnabled="{x:Bind ViewModel.CanPrune, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.Maintenance.PruneNetworksCommand}"
+                        IsEnabled="{x:Bind ViewModel.Maintenance.CanPrune, Mode=OneWay}" />
             </Grid>
 
             <Grid ColumnSpacing="8">
@@ -156,8 +156,8 @@
                            HorizontalAlignment="Right" Margin="0,0,10,0"
                            Text="" />
                 <Button Grid.Column="2" Content="清理卷" MinWidth="96"
-                        Command="{x:Bind ViewModel.PruneVolumesCommand}"
-                        IsEnabled="{x:Bind ViewModel.CanPrune, Mode=OneWay}" />
+                        Command="{x:Bind ViewModel.Maintenance.PruneVolumesCommand}"
+                        IsEnabled="{x:Bind ViewModel.Maintenance.CanPrune, Mode=OneWay}" />
             </Grid>
         </StackPanel>
 
@@ -166,7 +166,7 @@
                     Background="{ThemeResource LogPaneBg}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <ScrollViewer Padding="12">
-                    <TextBlock Text="{x:Bind ViewModel.CleanupOutput, Mode=OneWay}"
+                    <TextBlock Text="{x:Bind ViewModel.Maintenance.CleanupOutput, Mode=OneWay}"
                                FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
                                IsTextSelectionEnabled="True" />
                 </ScrollViewer>
@@ -174,7 +174,7 @@
             <TextBlock Text="清理结果会显示在此（CLI 原始输出，不解析）。"
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.HasCleanupOutput), Mode=OneWay}" />
+                       Visibility="{x:Bind conv:BoolConverters.InvertToVisibility(ViewModel.Maintenance.HasCleanupOutput), Mode=OneWay}" />
         </Grid>
     </Grid>
 </UserControl>

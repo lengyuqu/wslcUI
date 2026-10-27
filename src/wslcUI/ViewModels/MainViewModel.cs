@@ -34,7 +34,7 @@ public enum ResourcePage
     Events,
 }
 
-public partial class MainViewModel : ObservableObject, IDisposable
+public partial class MainViewModel : ObservableObject, IDisposable, IResourceAccess
 {
     private readonly IWslcClient _client;
     private readonly IDialogService? _dialogs;
@@ -91,21 +91,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string Logs { get; set; } = "";
 
     // ---------------- 维护页（磁盘占用 + 一键清理）----------------
-    // 四个卡片的文案（字符串而非数值：占用是格式化后的，计数带单位"个"）。
-    // 用 [ObservableProperty] 承载而不是直接算，是因为 Images/Containers 可能在
-    // 其它页面被就地合并（UpdateContainersInPlace），靠派生属性通知不可靠；
-    // 改为在固定时点（进维护页 / 主刷新后 / 每次清理后）统一重算。
-    [ObservableProperty] public partial string ImageTotalSizeText { get; set; } = "—";
-    [ObservableProperty] public partial string ImageCountText { get; set; } = "0";
-    [ObservableProperty] public partial string ReclaimableContainersText { get; set; } = "0";
-    [ObservableProperty] public partial string NetworkVolumeCountText { get; set; } = "0 / 0";
-
-    /// <summary>清理操作的 CLI 原始输出累积（不解析，原样展示）。</summary>
-    [ObservableProperty] public partial string CleanupOutput { get; set; } = "";
-    [ObservableProperty] public partial bool HasCleanupOutput { get; set; }
-
-    /// <summary>清理按钮可用性（忙碌时统一禁用，避免并发 prune）。</summary>
-    [ObservableProperty] public partial bool CanPrune { get; set; } = true;
+    // ---------------- 维护页（已拆为独立 VM）----------------
+    /// <summary>
+    /// 维护页的页面级 ViewModel：磁盘占用汇总 + 五条 prune。
+    /// 它通过 <see cref="IResourceAccess"/> 只读访问资源，prune 后让壳去刷新 ——
+    /// 集合所有权始终在壳手里，避免两个 VM 各自持有一份集合。
+    /// </summary>
+    public MaintenanceViewModel Maintenance { get; }
 
     // ---------------- 端点页（已拆为独立 VM）----------------
     /// <summary>
@@ -113,7 +105,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// 它只吃一个容器只读快照（<c>() =&gt; Containers</c>），不需要知道容器可变状态。
     /// </summary>
     public EndpointsViewModel Ports { get; }
-
     // ---------------- 批量操作（Select 模式）----------------
     // 竞品（WSL Container Desktop）的 Select 模式：列表进入多选后批量启停/删除。
     // 选中集合用 HashSet<string>（存**名称**而非对象引用）：列表刷新会就地
@@ -584,6 +575,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] public partial string LogTarget { get; set; } = "";
     [ObservableProperty] public partial ElementTheme Theme { get; set; } = ElementTheme.Default;
 
+    // ---------------- IResourceAccess 实现（供页面级子 VM 使用）----------------
+    // 显式实现而不是直接把属性类型改宽：接口实现要求返回类型**精确匹配**，
+    // 而 ObservableCollection<T> 虽然实现了 IReadOnlyList<T>，属性声明类型仍不同。
+    // 显式实现的好处是只读视图只在通过接口访问时生效，壳内部依旧用可变集合。
+    IReadOnlyList<ContainerInfo> IResourceAccess.Containers => Containers;
+    IReadOnlyList<ImageInfo> IResourceAccess.Images => Images;
+    IReadOnlyList<NetworkInfo> IResourceAccess.Networks => Networks;
+    IReadOnlyList<VolumeInfo> IResourceAccess.Volumes => Volumes;
+    IReadOnlyList<StatInfo> IResourceAccess.Stats => Stats;
+
     private IntPtr _ownerHandle;
 
     /// <summary>
@@ -645,6 +646,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
             IsInfoBarOpen = true;
         };
 
+        // 维护页子 VM：靠 IResourceAccess 只读拿集合，prune 后让壳刷新 ——
+        // 集合所有权仍在本类，不存在两份集合打架的可能。
+        Maintenance = new MaintenanceViewModel(this, client, dialogs);
+        Maintenance.BusyChanged += (_, busy) => IsBusy = busy;
+        Maintenance.StatusRequested += (_, text) => Status = text;
+        Maintenance.Succeeded += (_, _) => IsInfoBarOpen = false;
+        Maintenance.ErrorRaised += (_, ex) => ShowError(ex);
+
         RecomputeCanStates();
         // 首屏是概览页，而 OnCurrentPageChanged 只在页面**变化**时触发，
         // 默认值不会走到它 —— 这里补一次，否则 340px 详情面板会以「可见」
@@ -654,7 +663,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     // ---------------- 属性变更钩子 ----------------
 
-    partial void OnIsBusyChanged(bool value) => RecomputeCanStates();
+    partial void OnIsBusyChanged(bool value)
+    {
+        RecomputeCanStates();
+        // 维护页的 prune 按钮原先由 CanPrune = !IsBusy 守门。拆成子 VM 后它只看
+        // 自己的 IsPruning，会把「主刷新正在进行」漏掉 —— 这里把全局忙碌同步过去，
+        // 保住「任何长操作期间都不该并发 prune」这条原有约束。
+        Maintenance.SetGlobalBusy(value);
+    }
 
     partial void OnIsDetailOpenChanged(bool value) => RecomputeDetailPaneVisible();
 
@@ -853,7 +869,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
         // 进维护页时重算占用/可回收计数（数字来自 Images/Containers 的当前内容，
         // 而这两个集合可能在别的页面被就地合并过，光靠属性通知不可靠）。
-        if (value == ResourcePage.Maintenance) UpdateMaintenanceSummary();
+        if (value == ResourcePage.Maintenance) Maintenance.Recompute();
         // 端点面板同样依赖容器的 Ports 列：容器在别的页面被就地合并过时
         // 面板不会自动跟着重算，进页时按当前集合重算一次。
         if (value == ResourcePage.Endpoints) Ports.Rebuild();
@@ -900,7 +916,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         CanCreateNetwork = !IsBusy && !string.IsNullOrWhiteSpace(NewNetworkName);
         CanCreateVolume = !IsBusy && !string.IsNullOrWhiteSpace(NewVolumeName);
         CanPull = !IsBusy && !string.IsNullOrWhiteSpace(PullReference);
-        CanPrune = !IsBusy;
+
         OnPropertyChanged(nameof(HasSelection));
     }
 
@@ -1344,7 +1360,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             Volumes = new ObservableCollection<VolumeInfo>(volumes);
 
             RebuildContainerView();
-            UpdateMaintenanceSummary();
+            Maintenance.Recompute();
             Ports.Rebuild();
             UpdateBulkStates();
             // 概览页计数卡跟着集合走：RefreshAsync 是全量刷新，这里重算一次最省事。
@@ -1769,47 +1785,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task RefreshNetworksAsync()
+    public async Task RefreshNetworksAsync()
     {
         var n = await _client.ListNetworksAsync(CurrentToken);
         Networks = new ObservableCollection<NetworkInfo>(n);
     }
 
-    private async Task RefreshImagesAsync()
+    public async Task RefreshImagesAsync()
     {
         var i = await _client.ListImagesAsync(CurrentToken);
         Images = new ObservableCollection<ImageInfo>(i);
     }
 
-    private async Task RefreshVolumesAsync()
+    public async Task RefreshVolumesAsync()
     {
         var v = await _client.ListVolumesAsync(CurrentToken);
         Volumes = new ObservableCollection<VolumeInfo>(v);
-    }
-
-    // ---------------- 维护页：占用统计 + 一键清理 ----------------
-
-    /// <summary>
-    /// 重算维护页的四个数字。调用时点：进入维护页、主刷新成功后、每次清理之后。
-    /// **不做成派生属性**：<see cref="Images"/> 可能在别的页面被整体替换、
-    /// <see cref="Containers"/> 会被 <c>UpdateContainersInPlace</c> 就地改动内容
-    /// （集合实例不变 → 属性通知不触发），派生属性会读到陈旧计数。
-    /// </summary>
-    private void UpdateMaintenanceSummary()
-    {
-        long total = 0;
-        var unparsed = 0;
-        foreach (var img in Images)
-        {
-            if (SizeParser.TryParseBytes(img.Size, out var bytes)) total += bytes;
-            else unparsed++;
-        }
-
-        // 有解析不了的 SIZE（如 "N/A"）时加 "≥"，明示这是**下界**而不是精确合计。
-        ImageTotalSizeText = unparsed > 0 ? "≥" + SizeParser.Format(total) : SizeParser.Format(total);
-        ImageCountText = Images.Count.ToString(CultureInfo.InvariantCulture);
-        ReclaimableContainersText = Containers.Count(c => !c.IsRunning).ToString(CultureInfo.InvariantCulture);
-        NetworkVolumeCountText = $"{Networks.Count} / {Volumes.Count}";
     }
 
     // ---------------- 批量操作（Select 模式）----------------
@@ -1818,7 +1809,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ToggleSelectMode()
     {
-        IsSelectMode = !IsSelectMode;
         if (!IsSelectMode) SetBulkSelection(Array.Empty<string>());
     }
 
@@ -1964,7 +1954,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>容器单表刷新（prune 后用，不必拉全套）。</summary>
-    private async Task RefreshContainersAsync()
+    public async Task RefreshContainersAsync()
     {
         var c = await _client.ListContainersAsync(CurrentToken);
         UpdateContainersInPlace(c);
@@ -1972,96 +1962,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Ports.Rebuild();
         UpdateBulkStates();
     }
-
-    /// <summary>最新的清理输出放在最上面：输出区不滚动时也能看到本次结果。</summary>
-    private void AppendCleanupOutput(string text)
-    {
-        CleanupOutput = CleanupOutput.Length == 0 ? text : text + "\n" + CleanupOutput;
-        HasCleanupOutput = true;
-    }
-
-    /// <summary>
-    /// 清理命令的共用骨架：确认 → 执行 → 原样记录 CLI 输出 → 刷新相关列表 → 重算占用。
-    /// 输出**不做解析**（回收量文案随版本/语言变化），原样透传，永不过期。
-    /// </summary>
-    private async Task RunPruneAsync(
-        string label,
-        string confirmTitle,
-        string confirmMessage,
-        System.Func<CancellationToken, Task<string>> op,
-        System.Func<Task>? refresh)
-    {
-        if (_dialogs is not null && !await _dialogs.ConfirmAsync(confirmTitle, confirmMessage))
-            return;
-
-        var ct = BeginOp();
-        IsBusy = true;
-        Status = $"清理{label}…";
-        try
-        {
-            var output = await op(ct);
-            var body = string.IsNullOrWhiteSpace(output) ? "（无输出）" : output.TrimEnd();
-            AppendCleanupOutput($"[{System.DateTime.Now:HH:mm:ss}] 清理{label}\n{body}\n");
-            if (refresh is not null) await refresh();
-            UpdateMaintenanceSummary();
-            Status = $"已清理{label}";
-            IsInfoBarOpen = false;
-        }
-        catch (System.Exception ex)
-        {
-            ShowError(ex);
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    [RelayCommand]
-    private Task PruneContainersAsync() => RunPruneAsync(
-        "已停止的容器",
-        "清理已停止的容器",
-        "将删除所有**已停止**的容器及其可写层 —— 落在容器可写层里的数据会丢失。\n" +
-        "挂载在卷或绑定目录中的数据不受影响，镜像也不会被删除。\n\n确定继续吗？",
-        ct => _client.PruneContainersAsync(ct),
-        RefreshContainersAsync);
-
-    [RelayCommand]
-    private Task PruneDanglingImagesAsync() => RunPruneAsync(
-        "悬空镜像",
-        "清理悬空镜像",
-        "将删除所有**悬空镜像**（没有标签、也没有任何容器引用的中间层）。\n" +
-        "带标签的镜像不会被删除。\n\n确定继续吗？",
-        ct => _client.PruneImagesAsync(false, ct),
-        RefreshImagesAsync);
-
-    [RelayCommand]
-    private Task PruneUnusedImagesAsync() => RunPruneAsync(
-        $"未使用的镜像（共 {ImageCountText} 个）",
-        "清理所有未使用的镜像",
-        "⚠️ 这是高风险操作：会删除**所有没有被容器引用**的镜像，**包括带标签的**。\n" +
-        "之后需要重新 pull 或重新 build 才能再用。\n\n确定继续吗？",
-        ct => _client.PruneImagesAsync(true, ct),
-        RefreshImagesAsync);
-
-    [RelayCommand]
-    private Task PruneNetworksAsync() => RunPruneAsync(
-        "未使用的网络",
-        "清理未使用的网络",
-        "将删除所有没有容器接入的网络。\n" +
-        "bridge / host / none 这三个内置网络不会被删除。\n\n确定继续吗？",
-        ct => _client.PruneNetworksAsync(ct),
-        RefreshNetworksAsync);
-
-    [RelayCommand]
-    private Task PruneVolumesAsync() => RunPruneAsync(
-        "未使用的卷",
-        "清理未使用的卷",
-        "⚠️ 这是高风险操作：会删除**所有没有被任何容器使用**的卷，**卷内的数据会一并销毁**。\n" +
-        "若某个卷只是「当前没有容器在跑」（例如数据库已停止），它同样会被删除。\n\n" +
-        "确定继续吗？",
-        ct => _client.PruneVolumesAsync(ct),
-        RefreshVolumesAsync);
 
     // ---------------- 统计页实时采样（sparkline）----------------
     // wslc stats 是**一次性快照、不流式**，所以"实时曲线"只能定时轮询自己攒历史。
