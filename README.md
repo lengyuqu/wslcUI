@@ -198,7 +198,12 @@ wslcUI/
 ├── src/wslcUI/
 │   ├── wslcUI.csproj
 │   ├── App.xaml(.cs)             # DI 容器 + 启动
-│   ├── MainWindow.xaml(.cs)      # 主窗口：NavigationView 三栏（侧栏 220 + 内容 + 详情面板 340 + 日志抽屉 + 状态栏；9 page：容器/镜像/网络/卷/统计/构建/维护/端点/活动，x:Bind）
+│   ├── MainWindow.xaml(.cs)      # 主窗口外壳：Mica + WinUI TitleBar + NavigationView（侧栏 + 内容 + 详情面板三档宽度 + 日志抽屉 + 状态栏；10 page：概览/容器/镜像/网络/卷/统计/构建/维护/端点/活动）
+│   ├── Views/                    # 10 个页面 + 详情面板各自成 UserControl（x:Bind，壳只剩外壳）
+│   │   ├── DashboardView.xaml(.cs)   # 概览（默认首屏：计数卡 + 引擎健康 + 性能表）
+│   │   ├── ContainersView / ImagesView / NetworksView / VolumesView / StatsView
+│   │   ├── BuildView / MaintenanceView / EndpointsView / EventsView
+│   │   └── DetailPaneView.xaml(.cs)  # 详情面板（容器四 Tab：概览/资源/挂载/操作）
 │   ├── TerminalWindow.xaml(.cs)  # 交互式终端窗口（exec / attach）
 │   ├── ContainerFilesWindow.xaml(.cs) # 容器内文件浏览窗口（浏览/上传/下载/删除）
 │   ├── Program.cs                # WinUI 3 入口（Windows App SDK 2.4 bootstrap）
@@ -207,6 +212,7 @@ wslcUI/
 │   ├── Converters/
 │   ├── Services/
 │   │   ├── IWslcClient.cs        # 后端抽象（适配器接口）
+│   │   ├── IResourceAccess.cs    # 资源集合只读访问 + 局部刷新（页面级子 VM 的依赖入口）
 │   │   ├── WslcSdkClient.cs      # 真实后端：SDK 覆盖的操作 + 转发 WslcCli
 │   │   ├── WslcCli.cs            # CLI 桥接 + 表格/JSON 解析器 + 错误码中文映射
 │   │   ├── EventStreamService.cs  # `wslc events` 长驻流（异步逐行读 + 优雅停止）
@@ -222,7 +228,17 @@ wslcUI/
 │   │   ├── TerminalView.cs       # XTerm.NET cell 渲染层（行级 TextBlock + 同属性 run 合并）
 │   │   └── TerminalInputMapper.cs # 键盘 → 终端输入序列（纯函数，可单测）
 │   └── ViewModels/
-│       ├── MainViewModel.cs      # MVVM + RelayCommand
+│       ├── MainViewModel.cs        # 壳：容器 + 导航 + 面板 + 概览 + 批量（IResourceAccess 实现）
+│       ├── FilteredListViewModel.cs # 列表页基类：搜索/排序/差量同步/选中按业务键保持
+│       ├── ImagesViewModel.cs      # 镜像列表 + pull/delete/login/logout/tag/push
+│       ├── NetworksViewModel.cs    # 网络列表 + 创建/删除
+│       ├── VolumesViewModel.cs     # 卷列表 + 反向挂载映射
+│       ├── StatsViewModel.cs       # 统计快照表格
+│       ├── StatsSamplingViewModel.cs # 实时采样定时器 + 曲线历史
+│       ├── MaintenanceViewModel.cs # 占用汇总 + 五条 prune
+│       ├── EndpointsViewModel.cs   # 端点聚合 + 复制/打开
+│       ├── BuildViewModel.cs       # 构建（目录选择 + 输出流）
+│       ├── ActivityViewModel.cs    # events 实时流
 │       └── VolumeReverseMapping.cs # 卷 → 容器反转映射（纯函数，可单测）
 ├── tests/wslcUI.Tests/           # xUnit 单测；TestData/*.vt 为真实 VT 流夹具
 └── tools/

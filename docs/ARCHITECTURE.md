@@ -34,13 +34,18 @@ SDK 对象模型(Microsoft.WSL.Containers):
 ```
 ┌─────────────────────────────────────────────┐
 │ 视图层  WinUI 3 (Fluent)                    │  XAML + x:Bind
-│   - MainWindow: NavigationView 三栏          │
-│     (侧栏 220 + 内容 + 详情面板 340          │
-│     + 日志抽屉 + 状态栏)                     │
-│     9 page：容器/镜像/网络/卷/统计/构建/维护/端点/活动 │
+│   - MainWindow: Mica + TitleBar 外壳        │
+│     NavigationView（侧栏 + 内容 + 详情面板  │
+│     三档宽度 + 日志抽屉 + 状态栏）           │
+│     10 page：概览/容器/镜像/网络/卷/统计/    │
+│     构建/维护/端点/活动（各自成 UserControl）│
 ├─────────────────────────────────────────────┤
 │ ViewModel  MVVM (CommunityToolkit.Mvvm)      │  ObservableObject / RelayCommand
-│   - MainViewModel: 状态、命令、集合绑定        │
+│   - MainViewModel: 壳（容器 + 导航 + 概览    │
+│     + 批量），实现 IResourceAccess           │
+│   - FilteredListViewModel<T> + 8 个页面级    │
+│     子 VM（镜像/网络/卷/统计/采样/维护/      │
+│     端点/构建/活动）                         │
 ├─────────────────────────────────────────────┤
 │ 集成层  IWslcClient 适配器                    │  与 UI 解耦的契约
 │   - WslcSdkClient  → Microsoft.WSL.Containers │  真实后端

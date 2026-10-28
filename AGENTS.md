@@ -147,7 +147,13 @@ v1.0.0 之后攒了 14 个 commit 的所有二进制，`FileVersion` 全是 `1.0
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-**ViewModel 与 XAML 配套（7 个 page 互斥切换）**：`MainViewModel` 暴露 `ResourcePage` 枚举 + `CurrentPage` 偏属性；七个 `IsContainersPage` / `IsImagesPage` / `IsNetworksPage` / `IsVolumesPage` / `IsStatsPage` / `IsBuildPage` / `IsMaintenancePage` 派生 `bool` 由 `OnCurrentPageChanged` 同步翻转，XAML 用 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsXxxPage), Mode=OneWay}"` 互斥。`SearchText` 在切 page 时被 `OnCurrentPageChanged` 清空，避免跨页 filter 残留。
+**ViewModel 与 XAML 配套（10 个 page 互斥切换）**：`MainViewModel` 暴露 `ResourcePage` 枚举 + `CurrentPage` 偏属性；十个 `IsDashboardPage` / `IsContainersPage` / `IsImagesPage` / `IsNetworksPage` / `IsVolumesPage` / `IsStatsPage` / `IsBuildPage` / `IsMaintenancePage` / `IsEndpointsPage` / `IsEventsPage` 派生 `bool` 由 `OnCurrentPageChanged` 同步翻转，XAML 用 `Visibility="{x:Bind conv:BoolConverters.ToVisibility(ViewModel.IsXxxPage), Mode=OneWay}"` 互斥。⚠️ **默认页由 XAML 的 `NavigationViewItem IsSelected="True"` 与 VM 的 `CurrentPage` 初值共同决定，改默认页必须两处同步改**。
+
+**页面级子 VM（2026-10-28 起）**：镜像/网络/卷/统计/维护/端点/构建/活动/采样各自拆成 `XxxViewModel`（见 README 目录树）。规则：
+- 列表页继承 **`FilteredListViewModel<T>`**（过滤/排序/差量同步/选中按业务键保持都在基类），子类只回答四问：数据源、匹配规则、排序列映射、业务键。
+- 子 VM 依赖 **`IResourceAccess`**（只读集合 + 局部刷新），**集合所有权在壳**，子 VM 不直接改集合。
+- 长操作上抛 `BusyChanged` / `StatusRequested` / `Succeeded` / `ErrorRaised`，由壳统一接住；壳把全局忙碌通过 `SetGlobalBusy` 回灌，保证「主刷新期间不并发 prune/pull」。
+- `SearchText` / `SortSummary` 已下沉到各列表子 VM —— **切页清空搜索要清壳 + 四个子 VM 共 5 处**（`OnCurrentPageChanged`）。
 
 > 维护页是**唯一没有搜索/排序/详情面板**的页（`HasSelection` 的 `_ => false` 已覆盖）：它不放列表，只放 4 张占用卡片 + 5 条清理命令 + 一块 CLI 原始输出区。
 > 进页时 `OnCurrentPageChanged` 会调 `UpdateMaintenanceSummary()` 重算数字 —— 四个数字是 `[ObservableProperty]` 字符串而**不是**派生属性，因为 `Containers` 会被 `UpdateContainersInPlace` 就地改内容（集合实例不变 → 属性通知不触发），派生属性会读到陈旧计数。
@@ -179,8 +185,8 @@ WinUI 3 的 `Grid`（`FrameworkElement`）有 `RequestedTheme` 属性，`MainWin
 ### 数据刷新与绑定模式约定
 
 - `ContainerInfo` 实现 `INotifyPropertyChanged`：**刷新走就地合并**（`MainViewModel.UpdateContainersInPlace`，按 Name 复用实例 + 差量增删），**不要改回整体替换 `Containers` 集合**——那会让 `SelectedContainer` 脱离列表，触发 ListView 布局期异步清空选中的竞态。
-- **`Filtered*` 五个视图集合同样必须保实例**（`MainViewModel.SyncInView`：按引用做 Remove/Insert/Move 差量，**不要改回 `FilteredContainers = new ObservableCollection<…>(…)`**）。给视图属性赋新集合 = ListView 的 `ItemsSource` 换实例 → 选中被清空，而 `SelectedItem` 是 TwoWay → null 回写进 ViewModel（详情面板空白、`LogTarget` 清空、inspect 的 `_inspectCts` 取消），上一条精心做的"复用实例保选中"就被这一行抵消，用户每次刷新都要重新点一遍行。
-- 选中状态**不依赖**「ListView 在 Remove 时会不会回写 null」这类版本相关行为，由 `ApplyFilter` 自己收口：容器页对已离开视图的选中**显式置 null**（宁可丢选中，也不能让停止/删除/终端打到已消失的容器）；镜像/网络/卷/stats 四页每轮刷新都是**新模型实例**，故同步前记下业务键（`Reference` / `Name` / `Container`）、同步后按键重指到新实例，重指不到才清空。`SyncInView` 是纯函数，回归由 `tests/wslcUI.Tests/ViewModels/SyncInViewTests.cs` 钉住（无变化零通知 / 存活项同实例 / 重排不出现 Add+Reset）。
+- **视图集合必须保实例**（`MainViewModel.SyncInView`：按引用做 Remove/Insert/Move 差量，**不要改回 `FilteredContainers = new ObservableCollection<…>(…)` 或整组替换子 VM 的 `Items`**）。给视图属性赋新集合 = ListView 的 `ItemsSource` 换实例 → 选中被清空，而 `SelectedItem` 是 TwoWay → null 回写进 ViewModel（详情面板空白、`LogTarget` 清空、inspect 的 `_inspectCts` 取消），上一条精心做的"复用实例保选中"就被这一行抵消，用户每次刷新都要重新点一遍行。容器视图（`FilteredContainers`）仍在壳里；镜像/网络/卷/统计四页的视图在各子 VM 的 `Items` 里，机制相同（基类统一调 `SyncInView`）。
+- 选中状态**不依赖**「ListView 在 Remove 时会不会回写 null」这类版本相关行为。容器页由 `ApplyFilter` 收口：对已离开视图的选中**显式置 null**（宁可丢选中，也不能让停止/删除/终端打到已消失的容器）；镜像/网络/卷/统计四页的这段逻辑已下沉到 **`FilteredListViewModel<T>.Refresh()`**——每轮刷新都是**新模型实例**，同步前记下业务键（`Reference` / `Name` / `Container`）、同步后按键重指到新实例，重指不到才清空。`SyncInView` 是纯函数，回归由 `tests/wslcUI.Tests/ViewModels/SyncInViewTests.cs` 钉住（无变化零通知 / 存活项同实例 / 重排不出现 Add+Reset）。
 - 因为行不再重建，容器行模板与详情面板的所有可变字段绑定**必须 `Mode=OneWay`**（依赖 INPC）；`OneTime` 只可用于 `Name`/`Id` 这类不可变字段，或镜像/网络/卷页（模型仍是整体替换 + 行重建）。
 - `MergeStatsIntoContainers` 对不在 stats 快照里的容器会重置回 `—` + `HasStats=false`，防止显示过期数值。
 - NavigationView 选中与 `VM.CurrentPage` 双向同步：用户点击走 `NavView_SelectionChanged` → `NavigateCommand`；非导航入口切页（如空态「去拉取镜像」）由 `SyncNavSelection` 反向同步高亮。`Tag` 值必须与 `ResourcePage` 枚举名一致。
