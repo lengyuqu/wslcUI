@@ -143,7 +143,7 @@
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
-                                    <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                                    <Border Grid.Column="0" Tapped="DashboardCard_Tapped" Tag="Containers" Style="{StaticResource CardStyle}">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon FontSize="16" Glyph="&#xE7F4;"
@@ -159,7 +159,7 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                                    <Border Grid.Column="1" Tapped="DashboardCard_Tapped" Tag="Images" Style="{StaticResource CardStyle}">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon FontSize="16" Glyph="&#xEB9F;"
@@ -174,7 +174,7 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                                    <Border Grid.Column="2" Tapped="DashboardCard_Tapped" Tag="Networks" Style="{StaticResource CardStyle}">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon FontSize="16" Glyph="&#xE968;"
@@ -189,7 +189,7 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <Border Grid.Column="3" Style="{StaticResource CardStyle}">
+                                    <Border Grid.Column="3" Tapped="DashboardCard_Tapped" Tag="Volumes" Style="{StaticResource CardStyle}">
                                         <StackPanel Spacing="6">
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <FontIcon FontSize="16" Glyph="&#xE8B7;"

@@ -13,6 +13,18 @@ namespace wslcUI;
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>
+    /// 概览页四张计数卡的点击跳转（运行中容器 / 镜像 / 网络 / 卷）。
+    /// Tag 即 <c>ResourcePage</c> 枚举名，与 NavigationView 的 Tag 约定一致；
+    /// 统一走 <c>NavigateCommand</c>，让非导航入口的切页也经过同一条
+    /// <c>SyncNavSelection</c> 反向同步，避免高亮与实际页面脱节。
+    /// </summary>
+    private void DashboardCard_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is string tag)
+            ViewModel.NavigateCommand.Execute(tag);
+    }
+
     public MainViewModel ViewModel { get; }
 
     public MainWindow()
